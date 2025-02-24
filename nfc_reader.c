@@ -52,10 +52,12 @@ extern const SCARD_IO_REQUEST g_rgSCardT1Pci;
 // Add these structures and functions before main()
 #define MAX_CARDS 100
 #define UID_MAX_LENGTH 10
+#define MAX_CARD_NAME 50  // Maximum length for card names
 
 typedef struct {
     BYTE uid[UID_MAX_LENGTH];
     size_t uid_length;
+    char name[MAX_CARD_NAME];
 } CardAccess;
 
 static CardAccess authorized_cards[MAX_CARDS];
@@ -81,24 +83,35 @@ void add_card_access(BYTE *uid, size_t length) {
     // Check if card already exists
     for (int i = 0; i < num_authorized_cards; i++) {
         if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
-            printf("Card already authorized\n");
+            printf("Card already authorized as: %s\n", authorized_cards[i].name);
             return;
         }
     }
     
+    // Get name for the card
+    printf("Enter a name for this card (max %d characters): ", MAX_CARD_NAME - 1);
+    char name[MAX_CARD_NAME];
+    scanf(" %[^\n]", name);  // Read until newline
+    
+    // Copy data to new card entry
     memcpy(authorized_cards[num_authorized_cards].uid, uid, length);
     authorized_cards[num_authorized_cards].uid_length = length;
+    strncpy(authorized_cards[num_authorized_cards].name, name, MAX_CARD_NAME - 1);
+    authorized_cards[num_authorized_cards].name[MAX_CARD_NAME - 1] = '\0';  // Ensure null termination
+    
     num_authorized_cards++;
-    printf("Card authorized successfully\n");
+    printf("Card authorized successfully as: %s\n", name);
 }
 
 void remove_card_access(BYTE *uid, size_t length) {
     for (int i = 0; i < num_authorized_cards; i++) {
         if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
+            printf("Removing access for card: %s\n", authorized_cards[i].name);
             // Remove card by shifting remaining cards
             for (int j = i; j < num_authorized_cards - 1; j++) {
                 memcpy(authorized_cards[j].uid, authorized_cards[j + 1].uid, authorized_cards[j + 1].uid_length);
                 authorized_cards[j].uid_length = authorized_cards[j + 1].uid_length;
+                strcpy(authorized_cards[j].name, authorized_cards[j + 1].name);
             }
             num_authorized_cards--;
             printf("Card access removed\n");
@@ -138,6 +151,23 @@ void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_
     *uid_length = length - 2;
 }
 
+// Add a function to display all authorized cards
+void list_authorized_cards() {
+    if (num_authorized_cards == 0) {
+        printf("No cards are currently authorized\n");
+        return;
+    }
+    
+    printf("\nAuthorized Cards:\n");
+    printf("----------------\n");
+    for (int i = 0; i < num_authorized_cards; i++) {
+        printf("%d. %s (UID: ", i + 1, authorized_cards[i].name);
+        print_uid(authorized_cards[i].uid, authorized_cards[i].uid_length);
+        printf(")\n");
+    }
+    printf("\n");
+}
+
 // Modify the process_card function
 void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     BYTE *uid;
@@ -154,18 +184,26 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     print_uid(uid, uid_length);
     printf("\n");
     
-    if (check_card_access(uid, uid_length)) {
-        printf("Access granted - Card is authorized\n");
-    } else {
+    // Check access and display name if authorized
+    int authorized = 0;
+    for (int i = 0; i < num_authorized_cards; i++) {
+        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, uid_length)) {
+            printf("Access granted - Card is authorized as: %s\n", authorized_cards[i].name);
+            authorized = 1;
+            break;
+        }
+    }
+    if (!authorized) {
         printf("Access denied - Card is not authorized\n");
     }
     
     printf("\nCommands:\n");
     printf("1. Add card access\n");
     printf("2. Remove card access\n");
-    printf("3. Continue without changes\n");
+    printf("3. List all authorized cards\n");
+    printf("4. Continue without changes\n");
     
-    printf("Enter command (1-3): ");
+    printf("Enter command (1-4): ");
     char cmd;
     scanf(" %c", &cmd);
     
@@ -177,6 +215,9 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
             remove_card_access(uid, uid_length);
             break;
         case '3':
+            list_authorized_cards();
+            break;
+        case '4':
             break;
         default:
             printf("Invalid command\n");
