@@ -24,6 +24,133 @@
 #define SCARD_UNPOWER_CARD 2
 #endif
 
+// Add missing type definitions and constants
+#ifndef MAX_ATR_SIZE
+#define MAX_ATR_SIZE 33
+#endif
+
+#ifndef MAX_READERNAME
+#define MAX_READERNAME 128
+#endif
+
+#ifndef SCARD_STATE_EMPTY
+#define SCARD_STATE_EMPTY 0x00000010
+#endif
+
+#ifndef SCARD_STATE_MUTE
+#define SCARD_STATE_MUTE 0x00000200
+#endif
+
+#ifndef SCARD_STATE_UNAVAILABLE
+#define SCARD_STATE_UNAVAILABLE 0x00000008
+#endif
+
+extern SCARD_IO_REQUEST *SCARD_PCI_T1;
+
+// Add these structures and functions before main()
+
+#define MAX_CARDS 100
+#define UID_MAX_LENGTH 10
+
+typedef struct {
+    BYTE uid[UID_MAX_LENGTH];
+    size_t uid_length;
+} CardAccess;
+
+static CardAccess authorized_cards[MAX_CARDS];
+static int num_authorized_cards = 0;
+
+void print_uid(BYTE *uid, size_t length) {
+    for (size_t i = 0; i < length; i++) {
+        printf("%02X", uid[i]);
+    }
+}
+
+int compare_uid(BYTE *uid1, size_t len1, BYTE *uid2, size_t len2) {
+    if (len1 != len2) return 0;
+    return memcmp(uid1, uid2, len1) == 0;
+}
+
+void add_card_access(BYTE *uid, size_t length) {
+    if (num_authorized_cards >= MAX_CARDS) {
+        printf("Maximum number of authorized cards reached\n");
+        return;
+    }
+    
+    // Check if card already exists
+    for (int i = 0; i < num_authorized_cards; i++) {
+        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
+            printf("Card already authorized\n");
+            return;
+        }
+    }
+    
+    memcpy(authorized_cards[num_authorized_cards].uid, uid, length);
+    authorized_cards[num_authorized_cards].uid_length = length;
+    num_authorized_cards++;
+    printf("Card authorized successfully\n");
+}
+
+void remove_card_access(BYTE *uid, size_t length) {
+    for (int i = 0; i < num_authorized_cards; i++) {
+        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
+            // Remove card by shifting remaining cards
+            for (int j = i; j < num_authorized_cards - 1; j++) {
+                memcpy(authorized_cards[j].uid, authorized_cards[j + 1].uid, authorized_cards[j + 1].uid_length);
+                authorized_cards[j].uid_length = authorized_cards[j + 1].uid_length;
+            }
+            num_authorized_cards--;
+            printf("Card access removed\n");
+            return;
+        }
+    }
+    printf("Card not found in authorized list\n");
+}
+
+int check_card_access(BYTE *uid, size_t length) {
+    for (int i = 0; i < num_authorized_cards; i++) {
+        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Modify the main loop to handle commands
+void process_card(SCARDHANDLE hCard, BYTE *uid, size_t uid_length) {
+    printf("\nCard UID: ");
+    print_uid(uid, uid_length);
+    printf("\n");
+    
+    if (check_card_access(uid, uid_length)) {
+        printf("Access granted - Card is authorized\n");
+    } else {
+        printf("Access denied - Card is not authorized\n");
+    }
+    
+    printf("\nCommands:\n");
+    printf("1. Add card access\n");
+    printf("2. Remove card access\n");
+    printf("3. Continue without changes\n");
+    
+    printf("Enter command (1-3): ");
+    char cmd;
+    scanf(" %c", &cmd);
+    
+    switch (cmd) {
+        case '1':
+            add_card_access(uid, uid_length);
+            break;
+        case '2':
+            remove_card_access(uid, uid_length);
+            break;
+        case '3':
+            break;
+        default:
+            printf("Invalid command\n");
+    }
+}
+
 void check_status(LONG rv, const char *message) {
     if (rv != SCARD_S_SUCCESS) {
         printf("%s: %s\n", message, pcsc_stringify_error(rv));
@@ -126,11 +253,7 @@ int main() {
                                  pbRecvBuffer, &dwRecvLength);
                 
                 if (rv == SCARD_S_SUCCESS) {
-                    printf("Card UID: ");
-                    for (DWORD i = 0; i < dwRecvLength; i++) {
-                        printf("%02X", pbRecvBuffer[i]);
-                    }
-                    printf("\n");
+                    process_card(hCard, pbRecvBuffer, dwRecvLength - 2); // -2 to exclude status bytes
                 } else {
                     printf("Failed to read card UID: %s\n", pcsc_stringify_error(rv));
                 }
