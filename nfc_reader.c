@@ -1,12 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <PCSC/winscard.h>
+#include <time.h>
+
+// PCSC includes - make sure these are in the right order
 #include <PCSC/wintypes.h>
+#include <PCSC/pcsclite.h>
+#include <PCSC/winscard.h>
 #include <PCSC/reader.h>
+
 #include <curl/curl.h>
 #include <json-c/json.h>
-#include <time.h>
 
 // Add missing constants
 #ifndef MAX_ATR_SIZE
@@ -47,10 +51,6 @@
 #define SCARD_SCOPE_SYSTEM 2
 #define SCARD_UNPOWER_CARD 2
 #endif
-
-// Declare external SCARD_PCI_T1
-extern const SCARD_IO_REQUEST g_rgSCardT1Pci;
-#define SCARD_PCI_T1 (&g_rgSCardT1Pci)
 
 // Add these structures and functions before main()
 #define MAX_CARDS 100
