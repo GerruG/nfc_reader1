@@ -5,46 +5,7 @@
 #include <PCSC/wintypes.h>
 #include <PCSC/reader.h>
 
-// Add missing type definitions
-typedef struct {
-    DWORD dwProtocol;
-    DWORD cbPciLength;
-} SCARD_IO_REQUEST;
-
-typedef unsigned long SCARDCONTEXT;
-typedef SCARDCONTEXT *LPSCARDCONTEXT;
-typedef unsigned long SCARDHANDLE;
-typedef SCARDHANDLE *LPSCARDHANDLE;
-
-typedef struct {
-    const char *szReader;
-    void *pvUserData;
-    DWORD dwCurrentState;
-    DWORD dwEventState;
-    DWORD cbAtr;
-    unsigned char rgbAtr[33];
-} SCARD_READERSTATE;
-
-#ifndef SCARD_S_SUCCESS
-#define SCARD_S_SUCCESS 0
-#endif
-
-#ifndef INFINITE
-#define INFINITE 0xFFFFFFFF
-#endif
-
-// PC/SC Constants if not already defined
-#ifndef SCARD_STATE_UNAWARE
-#define SCARD_STATE_UNAWARE 0x00000000
-#define SCARD_STATE_PRESENT 0x00000020
-#define SCARD_SHARE_SHARED 2
-#define SCARD_PROTOCOL_T0 1
-#define SCARD_PROTOCOL_T1 2
-#define SCARD_SCOPE_SYSTEM 2
-#define SCARD_UNPOWER_CARD 2
-#endif
-
-// Add missing type definitions and constants
+// Add missing constants
 #ifndef MAX_ATR_SIZE
 #define MAX_ATR_SIZE 33
 #endif
@@ -65,10 +26,30 @@ typedef struct {
 #define SCARD_STATE_UNAVAILABLE 0x00000008
 #endif
 
-extern SCARD_IO_REQUEST *SCARD_PCI_T1;
+#ifndef SCARD_S_SUCCESS
+#define SCARD_S_SUCCESS 0
+#endif
+
+#ifndef INFINITE
+#define INFINITE 0xFFFFFFFF
+#endif
+
+// PC/SC Constants if not already defined
+#ifndef SCARD_STATE_UNAWARE
+#define SCARD_STATE_UNAWARE 0x00000000
+#define SCARD_STATE_PRESENT 0x00000020
+#define SCARD_SHARE_SHARED 2
+#define SCARD_PROTOCOL_T0 1
+#define SCARD_PROTOCOL_T1 2
+#define SCARD_SCOPE_SYSTEM 2
+#define SCARD_UNPOWER_CARD 2
+#endif
+
+// Declare external SCARD_PCI_T1
+extern const SCARD_IO_REQUEST g_rgSCardT1Pci;
+#define SCARD_PCI_T1 (&g_rgSCardT1Pci)
 
 // Add these structures and functions before main()
-
 #define MAX_CARDS 100
 #define UID_MAX_LENGTH 10
 
