@@ -6,6 +6,7 @@
 #include <PCSC/reader.h>
 #include <curl/curl.h>
 #include <json-c/json.h>
+#include <time.h>
 
 // Add missing constants
 #ifndef MAX_ATR_SIZE
@@ -186,6 +187,11 @@ typedef struct {
     unsigned long dwProtocol;
     unsigned long cbPciLength;
 } SCARD_IO_REQUEST;
+
+// Add this type definition after the other typedefs
+#ifndef BYTE
+typedef unsigned char BYTE;
+#endif
 
 // Add these new functions before main()
 
