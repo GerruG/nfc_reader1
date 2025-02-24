@@ -57,151 +57,43 @@ extern const SCARD_IO_REQUEST g_rgSCardT1Pci;
 #define UID_MAX_LENGTH 10
 #define MAX_CARD_NAME 50  // Maximum length for card names
 
-typedef struct {
-    BYTE uid[UID_MAX_LENGTH];
-    size_t uid_length;
-    char name[MAX_CARD_NAME];
-} CardAccess;
-
-static CardAccess authorized_cards[MAX_CARDS];
-static int num_authorized_cards = 0;
-
-void print_uid(BYTE *uid, size_t length) {
-    for (size_t i = 0; i < length; i++) {
-        printf("%02X", uid[i]);
-    }
-}
-
-int compare_uid(BYTE *uid1, size_t len1, BYTE *uid2, size_t len2) {
-    if (len1 != len2) return 0;
-    return memcmp(uid1, uid2, len1) == 0;
-}
-
-void add_card_access(BYTE *uid, size_t length) {
-    if (num_authorized_cards >= MAX_CARDS) {
-        printf("Maximum number of authorized cards reached\n");
-        return;
-    }
-    
-    // Check if card already exists
-    for (int i = 0; i < num_authorized_cards; i++) {
-        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
-            printf("Card already authorized as: %s\n", authorized_cards[i].name);
-            return;
-        }
-    }
-    
-    // Get name for the card
-    printf("Enter a name for this card (max %d characters): ", MAX_CARD_NAME - 1);
-    char name[MAX_CARD_NAME];
-    scanf(" %[^\n]", name);  // Read until newline
-    
-    // Copy data to new card entry
-    memcpy(authorized_cards[num_authorized_cards].uid, uid, length);
-    authorized_cards[num_authorized_cards].uid_length = length;
-    strncpy(authorized_cards[num_authorized_cards].name, name, MAX_CARD_NAME - 1);
-    authorized_cards[num_authorized_cards].name[MAX_CARD_NAME - 1] = '\0';  // Ensure null termination
-    
-    num_authorized_cards++;
-    printf("Card authorized successfully as: %s\n", name);
-}
-
-void remove_card_access(BYTE *uid, size_t length) {
-    for (int i = 0; i < num_authorized_cards; i++) {
-        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
-            printf("Removing access for card: %s\n", authorized_cards[i].name);
-            // Remove card by shifting remaining cards
-            for (int j = i; j < num_authorized_cards - 1; j++) {
-                memcpy(authorized_cards[j].uid, authorized_cards[j + 1].uid, authorized_cards[j + 1].uid_length);
-                authorized_cards[j].uid_length = authorized_cards[j + 1].uid_length;
-                strcpy(authorized_cards[j].name, authorized_cards[j + 1].name);
-            }
-            num_authorized_cards--;
-            printf("Card access removed\n");
-            return;
-        }
-    }
-    printf("Card not found in authorized list\n");
-}
-
-int check_card_access(BYTE *uid, size_t length) {
-    for (int i = 0; i < num_authorized_cards; i++) {
-        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, length)) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-// Add this helper function before process_card
-void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_length) {
-    // Check if we have at least 2 bytes for status
-    if (length < 2) {
-        *uid = NULL;
-        *uid_length = 0;
-        return;
-    }
-
-    // Check if command was successful (status bytes should be 0x90 0x00)
-    if (response[length - 2] != 0x90 || response[length - 1] != 0x00) {
-        *uid = NULL;
-        *uid_length = 0;
-        return;
-    }
-
-    // Set the UID pointer and length (excluding status bytes)
-    *uid = response;
-    *uid_length = length - 2;
-}
-
-// Add a function to display all authorized cards
-void list_authorized_cards() {
-    if (num_authorized_cards == 0) {
-        printf("No cards are currently authorized\n");
-        return;
-    }
-    
-    printf("\nAuthorized Cards:\n");
-    printf("----------------\n");
-    for (int i = 0; i < num_authorized_cards; i++) {
-        printf("%d. %s (UID: ", i + 1, authorized_cards[i].name);
-        print_uid(authorized_cards[i].uid, authorized_cards[i].uid_length);
-        printf(")\n");
-    }
-    printf("\n");
-}
+// Update the API URL to match your setup
+static const char *api_url = "http://192.168.20.152:3000/card-access";
 
 // Add these type definitions after the includes and before the constants
-/*
-typedef unsigned long SCARDCONTEXT;
-typedef unsigned long SCARDHANDLE;
-typedef struct {
-    const char *szReader;
-    void *pvUserData;
-    unsigned long dwCurrentState;
-    unsigned long dwEventState;
-    unsigned long cbAtr;
-    unsigned char rgbAtr[33];
-} SCARD_READERSTATE;
-
-typedef struct {
-    unsigned long dwProtocol;
-    unsigned long cbPciLength;
-} SCARD_IO_REQUEST;
-*/
-// Add this type definition after the other typedefs
 #ifndef BYTE
 typedef unsigned char BYTE;
 #endif
 
+#ifndef DWORD
+typedef unsigned long DWORD;
+#endif
+
+#ifndef LPTSTR
+typedef char* LPTSTR;
+#endif
+
+typedef unsigned long SCARDCONTEXT;
+typedef unsigned long SCARDHANDLE;
+
+typedef struct {
+    const char *szReader;
+    void *pvUserData;
+    DWORD dwCurrentState;
+    DWORD dwEventState;
+    DWORD cbAtr;
+    unsigned char rgbAtr[33];
+} SCARD_READERSTATE;
+
+typedef struct {
+    DWORD dwProtocol;
+    DWORD cbPciLength;
+} SCARD_IO_REQUEST;
+
 // Add these new functions before main()
 
-// Remove the ApiConfig structure and replace with simple URL
-static const char *api_url = "http://localhost:3000/card-access";
-
-
 // Simplify the send_card_data_to_api function
-void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized) {
+void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized, const char *cardName) {
     CURL *curl;
     CURLcode res;
     struct json_object *json_obj = json_object_new_object();
@@ -215,6 +107,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized) {
     // Create JSON payload
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
     json_object_object_add(json_obj, "authorized", json_object_new_boolean(authorized));
+    json_object_object_add(json_obj, "name", json_object_new_string(cardName ? cardName : ""));
     json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
     
     const char *json_str = json_object_to_json_string(json_obj);
@@ -227,6 +120,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized) {
         curl_easy_setopt(curl, CURLOPT_URL, api_url);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); // Enable verbose output for debugging
         
         res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
@@ -237,7 +131,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized) {
         curl_easy_cleanup(curl);
     }
     
-    json_object_put(json_obj);  // Free JSON object
+    json_object_put(json_obj);
 }
 
 // Modify the process_card function to include API call
@@ -246,57 +140,49 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     size_t uid_length;
     
     handle_card_response(response, response_length, &uid, &uid_length);
-    
     if (uid == NULL || uid_length == 0) {
         printf("Invalid card response\n");
         return;
     }
-
+    
     printf("\nCard UID: ");
     print_uid(uid, uid_length);
     printf("\n");
     
-    // Check access and display name if authorized
+    // Read card name from block 4
+    BYTE cmd_get_name[] = { 0xFF, 0xB0, 0x00, 0x04, 0x10 };  // Read 16 bytes from block 4
+    BYTE nameBuffer[32] = {0};
+    DWORD dwNameLength = sizeof(nameBuffer);
+    
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_name, sizeof(cmd_get_name), 
+                           NULL, nameBuffer, &dwNameLength);
+    
+    char cardName[MAX_CARD_NAME] = {0};
     int authorized = 0;
-    for (int i = 0; i < num_authorized_cards; i++) {
-        if (compare_uid(authorized_cards[i].uid, authorized_cards[i].uid_length, uid, uid_length)) {
-            printf("Access granted - Card is authorized as: %s\n", authorized_cards[i].name);
-            authorized = 1;
-            break;
+    
+    if (rv == SCARD_S_SUCCESS) {
+        // Check if response is valid (status bytes 0x90 0x00)
+        if (dwNameLength >= 2 && nameBuffer[dwNameLength - 2] == 0x90 && 
+            nameBuffer[dwNameLength - 1] == 0x00) {
+            
+            size_t nameDataLength = dwNameLength - 2;
+            if (nameDataLength > 16) nameDataLength = 16;
+            memcpy(cardName, nameBuffer, nameDataLength);
+            cardName[nameDataLength] = '\0';
+            
+            // Consider card authorized if it has a non-empty name
+            authorized = (strlen(cardName) > 0);
+            printf("Card Name: %s\n", cardName);
+            printf("Access %s\n", authorized ? "granted" : "denied");
+        } else {
+            printf("Invalid name response from card\n");
         }
+    } else {
+        printf("Failed to read card name: %s\n", pcsc_stringify_error(rv));
     }
-    if (!authorized) {
-        printf("Access denied - Card is not authorized\n");
-    }
     
-    // After checking authorization, send data to API
-    send_card_data_to_api(uid, uid_length, authorized);
-    
-    printf("\nCommands:\n");
-    printf("1. Add card access\n");
-    printf("2. Remove card access\n");
-    printf("3. List all authorized cards\n");
-    printf("4. Continue without changes\n");
-    
-    printf("Enter command (1-4): ");
-    char cmd;
-    scanf(" %c", &cmd);
-    
-    switch (cmd) {
-        case '1':
-            add_card_access(uid, uid_length);
-            break;
-        case '2':
-            remove_card_access(uid, uid_length);
-            break;
-        case '3':
-            list_authorized_cards();
-            break;
-        case '4':
-            break;
-        default:
-            printf("Invalid command\n");
-    }
+    // Send data to API
+    send_card_data_to_api(uid, uid_length, authorized, cardName);
 }
 
 void check_status(LONG rv, const char *message) {
