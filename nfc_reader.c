@@ -156,7 +156,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     int is_authorized = check_card_authorization(uid_hex);
     printf("Card authorization status: %s\n", is_authorized ? "Authorized" : "Not authorized");
     
-    // Create JSON payload with authorization status
+    // Create JSON payload matching server expectations
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
     json_object_object_add(json_obj, "authorized", json_object_new_boolean(is_authorized));
     json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
