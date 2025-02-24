@@ -98,7 +98,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     
     // Create JSON payload matching server expectations
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
-    json_object_object_add(json_obj, "authorized", json_object_new_boolean(false)); // Default to false since we're not checking auth
+    json_object_object_add(json_obj, "authorized", json_object_new_boolean(0)); // 0 for false
     json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
     
     const char *json_str = json_object_to_json_string(json_obj);
