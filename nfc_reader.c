@@ -84,8 +84,8 @@ void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_
     *uid_length = length - 2;
 }
 
-// Simplify the send_card_data_to_api function
-void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized, const char *cardName) {
+// Simplify the send_card_data_to_api function to only handle UID
+void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     CURL *curl;
     CURLcode res;
     struct json_object *json_obj = json_object_new_object();
@@ -98,8 +98,6 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized, const c
     
     // Create JSON payload
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
-    json_object_object_add(json_obj, "authorized", json_object_new_boolean(authorized));
-    json_object_object_add(json_obj, "name", json_object_new_string(cardName ? cardName : ""));
     json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
     
     const char *json_str = json_object_to_json_string(json_obj);
@@ -126,7 +124,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized, const c
     json_object_put(json_obj);
 }
 
-// Modify the process_card function to include API call
+// Simplify process_card to only handle UID
 void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     BYTE *uid;
     size_t uid_length;
@@ -141,40 +139,8 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     print_uid(uid, uid_length);
     printf("\n");
     
-    // Read card name from block 4
-    BYTE cmd_get_name[] = { 0xFF, 0xB0, 0x00, 0x04, 0x10 };  // Read 16 bytes from block 4
-    BYTE nameBuffer[32] = {0};
-    DWORD dwNameLength = sizeof(nameBuffer);
-    
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_name, sizeof(cmd_get_name), 
-                           NULL, nameBuffer, &dwNameLength);
-    
-    char cardName[MAX_CARD_NAME] = {0};
-    int authorized = 0;
-    
-    if (rv == SCARD_S_SUCCESS) {
-        // Check if response is valid (status bytes 0x90 0x00)
-        if (dwNameLength >= 2 && nameBuffer[dwNameLength - 2] == 0x90 && 
-            nameBuffer[dwNameLength - 1] == 0x00) {
-            
-            size_t nameDataLength = dwNameLength - 2;
-            if (nameDataLength > 16) nameDataLength = 16;
-            memcpy(cardName, nameBuffer, nameDataLength);
-            cardName[nameDataLength] = '\0';
-            
-            // Consider card authorized if it has a non-empty name
-            authorized = (strlen(cardName) > 0);
-            printf("Card Name: %s\n", cardName);
-            printf("Access %s\n", authorized ? "granted" : "denied");
-        } else {
-            printf("Invalid name response from card\n");
-        }
-    } else {
-        printf("Failed to read card name: %s\n", pcsc_stringify_error(rv));
-    }
-    
-    // Send data to API
-    send_card_data_to_api(uid, uid_length, authorized, cardName);
+    // Send only UID data to API
+    send_card_data_to_api(uid, uid_length);
 }
 
 void check_status(LONG rv, const char *message) {
