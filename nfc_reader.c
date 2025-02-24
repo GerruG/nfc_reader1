@@ -60,37 +60,29 @@ extern const SCARD_IO_REQUEST g_rgSCardT1Pci;
 // Update the API URL to match your setup
 static const char *api_url = "http://192.168.20.152:3000/card-access";
 
-// Add these type definitions after the includes and before the constants
-#ifndef BYTE
-typedef unsigned char BYTE;
-#endif
+// Add these helper functions that were removed earlier
+void print_uid(BYTE *uid, size_t length) {
+    for (size_t i = 0; i < length; i++) {
+        printf("%02X", uid[i]);
+    }
+}
 
-#ifndef DWORD
-typedef unsigned long DWORD;
-#endif
+void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_length) {
+    if (length < 2) {
+        *uid = NULL;
+        *uid_length = 0;
+        return;
+    }
 
-#ifndef LPTSTR
-typedef char* LPTSTR;
-#endif
+    if (response[length - 2] != 0x90 || response[length - 1] != 0x00) {
+        *uid = NULL;
+        *uid_length = 0;
+        return;
+    }
 
-typedef unsigned long SCARDCONTEXT;
-typedef unsigned long SCARDHANDLE;
-
-typedef struct {
-    const char *szReader;
-    void *pvUserData;
-    DWORD dwCurrentState;
-    DWORD dwEventState;
-    DWORD cbAtr;
-    unsigned char rgbAtr[33];
-} SCARD_READERSTATE;
-
-typedef struct {
-    DWORD dwProtocol;
-    DWORD cbPciLength;
-} SCARD_IO_REQUEST;
-
-// Add these new functions before main()
+    *uid = response;
+    *uid_length = length - 2;
+}
 
 // Simplify the send_card_data_to_api function
 void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized, const char *cardName) {
