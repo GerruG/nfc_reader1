@@ -4,6 +4,8 @@
 #include <PCSC/winscard.h>
 #include <PCSC/wintypes.h>
 #include <PCSC/reader.h>
+#include <curl/curl.h>
+#include <json-c/json.h>
 
 // Add missing constants
 #ifndef MAX_ATR_SIZE
@@ -168,7 +170,69 @@ void list_authorized_cards() {
     printf("\n");
 }
 
-// Modify the process_card function
+// Add these type definitions after the includes and before the constants
+typedef unsigned long SCARDCONTEXT;
+typedef unsigned long SCARDHANDLE;
+typedef struct {
+    const char *szReader;
+    void *pvUserData;
+    unsigned long dwCurrentState;
+    unsigned long dwEventState;
+    unsigned long cbAtr;
+    unsigned char rgbAtr[33];
+} SCARD_READERSTATE;
+
+typedef struct {
+    unsigned long dwProtocol;
+    unsigned long cbPciLength;
+} SCARD_IO_REQUEST;
+
+// Add these new functions before main()
+
+// Remove the ApiConfig structure and replace with simple URL
+static const char *api_url = "http://localhost:3000/card-access";
+
+// Simplify the send_card_data_to_api function
+void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized) {
+    CURL *curl;
+    CURLcode res;
+    struct json_object *json_obj = json_object_new_object();
+    
+    // Convert UID to hex string
+    char uid_hex[UID_MAX_LENGTH * 2 + 1] = {0};
+    for (size_t i = 0; i < uid_length; i++) {
+        sprintf(uid_hex + (i * 2), "%02X", uid[i]);
+    }
+    
+    // Create JSON payload
+    json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
+    json_object_object_add(json_obj, "authorized", json_object_new_boolean(authorized));
+    json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
+    
+    const char *json_str = json_object_to_json_string(json_obj);
+    
+    curl = curl_easy_init();
+    if (curl) {
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        
+        curl_easy_setopt(curl, CURLOPT_URL, api_url);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
+        
+        res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            fprintf(stderr, "Failed to send data to API: %s\n", curl_easy_strerror(res));
+        }
+        
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }
+    
+    json_object_put(json_obj);  // Free JSON object
+}
+
+// Modify the process_card function to include API call
 void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     BYTE *uid;
     size_t uid_length;
@@ -196,6 +260,9 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     if (!authorized) {
         printf("Access denied - Card is not authorized\n");
     }
+    
+    // After checking authorization, send data to API
+    send_card_data_to_api(uid, uid_length, authorized);
     
     printf("\nCommands:\n");
     printf("1. Add card access\n");
@@ -232,6 +299,9 @@ void check_status(LONG rv, const char *message) {
 }
 
 int main() {
+    // Initialize curl before the main loop
+    curl_global_init(CURL_GLOBAL_ALL);
+    
     SCARDCONTEXT hContext;
     SCARDHANDLE hCard;
     DWORD dwActiveProtocol;
@@ -355,5 +425,7 @@ int main() {
     free(mszReaders);
     free(reader_name);
     
+    // Add cleanup before return
+    curl_global_cleanup();
     return 0;
 }
