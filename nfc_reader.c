@@ -117,8 +117,39 @@ int check_card_access(BYTE *uid, size_t length) {
     return 0;
 }
 
-// Modify the main loop to handle commands
-void process_card(SCARDHANDLE hCard, BYTE *uid, size_t uid_length) {
+// Add this helper function before process_card
+void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_length) {
+    // Check if we have at least 2 bytes for status
+    if (length < 2) {
+        *uid = NULL;
+        *uid_length = 0;
+        return;
+    }
+
+    // Check if command was successful (status bytes should be 0x90 0x00)
+    if (response[length - 2] != 0x90 || response[length - 1] != 0x00) {
+        *uid = NULL;
+        *uid_length = 0;
+        return;
+    }
+
+    // Set the UID pointer and length (excluding status bytes)
+    *uid = response;
+    *uid_length = length - 2;
+}
+
+// Modify the process_card function
+void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
+    BYTE *uid;
+    size_t uid_length;
+    
+    handle_card_response(response, response_length, &uid, &uid_length);
+    
+    if (uid == NULL || uid_length == 0) {
+        printf("Invalid card response\n");
+        return;
+    }
+
     printf("\nCard UID: ");
     print_uid(uid, uid_length);
     printf("\n");
