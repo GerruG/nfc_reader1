@@ -199,6 +199,7 @@ typedef unsigned char BYTE;
 // Remove the ApiConfig structure and replace with simple URL
 static const char *api_url = "http://localhost:3000/card-access";
 
+
 // Simplify the send_card_data_to_api function
 void send_card_data_to_api(BYTE *uid, size_t uid_length, int authorized) {
     CURL *curl;
