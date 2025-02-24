@@ -5,6 +5,26 @@
 #include <PCSC/wintypes.h>
 #include <PCSC/reader.h>
 
+// Add missing type definitions
+typedef struct {
+    DWORD dwProtocol;
+    DWORD cbPciLength;
+} SCARD_IO_REQUEST;
+
+typedef unsigned long SCARDCONTEXT;
+typedef SCARDCONTEXT *LPSCARDCONTEXT;
+typedef unsigned long SCARDHANDLE;
+typedef SCARDHANDLE *LPSCARDHANDLE;
+
+typedef struct {
+    const char *szReader;
+    void *pvUserData;
+    DWORD dwCurrentState;
+    DWORD dwEventState;
+    DWORD cbAtr;
+    unsigned char rgbAtr[33];
+} SCARD_READERSTATE;
+
 #ifndef SCARD_S_SUCCESS
 #define SCARD_S_SUCCESS 0
 #endif
