@@ -84,7 +84,7 @@ void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_
     *uid_length = length - 2;
 }
 
-// Simplify the send_card_data_to_api function to only handle UID
+// Modify send_card_data_to_api to include the authorized field
 void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     CURL *curl;
     CURLcode res;
@@ -96,8 +96,9 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length) {
         sprintf(uid_hex + (i * 2), "%02X", uid[i]);
     }
     
-    // Create JSON payload
+    // Create JSON payload matching server expectations
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
+    json_object_object_add(json_obj, "authorized", json_object_new_boolean(false)); // Default to false since we're not checking auth
     json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
     
     const char *json_str = json_object_to_json_string(json_obj);
