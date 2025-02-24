@@ -84,6 +84,62 @@ void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_
     *uid_length = length - 2;
 }
 
+// Add callback declaration
+size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
+
+int check_card_authorization(const char *uid_hex) {
+    CURL *curl;
+    CURLcode res;
+    int authorized = 0;
+    char url[256];
+    
+    // Construct the URL with the UID
+    snprintf(url, sizeof(url), "http://192.168.20.152:3000/check-access/%s", uid_hex);
+    
+    struct json_object *json_response = NULL;
+    
+    curl = curl_easy_init();
+    if (curl) {
+        char *response_data = NULL;
+        size_t response_size = 0;
+        
+        // Setup curl to write to our buffer
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+        
+        res = curl_easy_perform(curl);
+        if (res == CURLE_OK) {
+            json_response = json_tokener_parse(response_data);
+            if (json_response) {
+                struct json_object *auth_obj;
+                if (json_object_object_get_ex(json_response, "authorized", &auth_obj)) {
+                    authorized = json_object_get_boolean(auth_obj);
+                }
+                json_object_put(json_response);
+            }
+        }
+        
+        free(response_data);
+        curl_easy_cleanup(curl);
+    }
+    
+    return authorized;
+}
+
+size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    char **response_ptr = (char**)userdata;
+    size_t realsize = size * nmemb;
+    
+    *response_ptr = realloc(*response_ptr, realsize + 1);
+    if (*response_ptr) {
+        memcpy(*response_ptr, ptr, realsize);
+        (*response_ptr)[realsize] = 0;
+    }
+    
+    return realsize;
+}
+
 // Modify send_card_data_to_api to include the authorized field
 void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     CURL *curl;
@@ -96,9 +152,13 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length) {
         sprintf(uid_hex + (i * 2), "%02X", uid[i]);
     }
     
-    // Create JSON payload matching server expectations
+    // Check if card is authorized
+    int is_authorized = check_card_authorization(uid_hex);
+    printf("Card authorization status: %s\n", is_authorized ? "Authorized" : "Not authorized");
+    
+    // Create JSON payload with authorization status
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
-    json_object_object_add(json_obj, "authorized", json_object_new_boolean(0)); // 0 for false
+    json_object_object_add(json_obj, "authorized", json_object_new_boolean(is_authorized));
     json_object_object_add(json_obj, "timestamp", json_object_new_int64(time(NULL)));
     
     const char *json_str = json_object_to_json_string(json_obj);
