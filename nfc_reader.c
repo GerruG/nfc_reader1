@@ -172,6 +172,7 @@ void list_authorized_cards() {
 }
 
 // Add these type definitions after the includes and before the constants
+/*
 typedef unsigned long SCARDCONTEXT;
 typedef unsigned long SCARDHANDLE;
 typedef struct {
@@ -187,7 +188,7 @@ typedef struct {
     unsigned long dwProtocol;
     unsigned long cbPciLength;
 } SCARD_IO_REQUEST;
-
+*/
 // Add this type definition after the other typedefs
 #ifndef BYTE
 typedef unsigned char BYTE;
