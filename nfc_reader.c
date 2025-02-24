@@ -285,7 +285,7 @@ int main() {
                                  pbRecvBuffer, &dwRecvLength);
                 
                 if (rv == SCARD_S_SUCCESS) {
-                    process_card(hCard, pbRecvBuffer, dwRecvLength - 2); // -2 to exclude status bytes
+                    process_card(hCard, pbRecvBuffer, dwRecvLength);
                 } else {
                     printf("Failed to read card UID: %s\n", pcsc_stringify_error(rv));
                 }
