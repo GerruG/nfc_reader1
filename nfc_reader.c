@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
 
 // PCSC includes - make sure these are in the right order
 #include <PCSC/wintypes.h>
