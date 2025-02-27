@@ -244,7 +244,7 @@ int main() {
     printf("║        NFC Reader Initialized        ║\n");
     printf("╠══════════════════════════════════════╣\n");
     printf("║ Reader:                              ║\n");
-    printf("║ %-36s║\n", reader_name);
+    printf("║ %-36s ║\n", reader_name);
     printf("║                                      ║\n");
     printf("║ Status: Waiting for cards            ║\n");
     printf("║                                      ║\n");
