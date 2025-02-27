@@ -211,134 +211,154 @@ void check_status(LONG rv, const char *message) {
     }
 }
 
-int main() {
-    // Initialize curl before the main loop
-    curl_global_init(CURL_GLOBAL_ALL);
-    
-    SCARDCONTEXT hContext;
+// New helper functions to reduce nesting
+LONG initialize_pcsc(SCARDCONTEXT *hContext, char **reader_name) {
+    LONG rv;
+    LPTSTR mszReaders;
+    DWORD dwReaders;
+
+    rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, hContext);
+    if (rv != SCARD_S_SUCCESS) return rv;
+
+    rv = SCardListReaders(*hContext, NULL, NULL, &dwReaders);
+    if (rv != SCARD_S_SUCCESS) return rv;
+
+    mszReaders = malloc(dwReaders);
+    rv = SCardListReaders(*hContext, NULL, mszReaders, &dwReaders);
+    if (rv != SCARD_S_SUCCESS) {
+        free(mszReaders);
+        return rv;
+    }
+
+    *reader_name = strdup(mszReaders);
+    free(mszReaders);
+    return SCARD_S_SUCCESS;
+}
+
+void print_reader_state(DWORD state) {
+    printf("Reader State: ");
+    if (state & SCARD_STATE_EMPTY)        printf("Empty ");
+    if (state & SCARD_STATE_PRESENT)      printf("Card Present ");
+    if (state & SCARD_STATE_MUTE)         printf("Mute ");
+    if (state & SCARD_STATE_UNAVAILABLE)  printf("Unavailable ");
+    printf("\n");
+}
+
+LONG handle_card_connection(SCARDCONTEXT hContext, const char *reader_name) {
+    LONG rv;
     SCARDHANDLE hCard;
     DWORD dwActiveProtocol;
     BYTE pbRecvBuffer[32];
     DWORD dwRecvLength;
+
+    rv = SCardConnect(hContext, reader_name, SCARD_SHARE_SHARED,
+                     SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
+                     &hCard, &dwActiveProtocol);
+    if (rv != SCARD_S_SUCCESS) {
+        printf("Failed to connect to card: %s\n", pcsc_stringify_error(rv));
+        return rv;
+    }
+
+    printf("Protocol: %s\n", 
+        dwActiveProtocol == SCARD_PROTOCOL_T0 ? "T=0" :
+        dwActiveProtocol == SCARD_PROTOCOL_T1 ? "T=1" : "Unknown");
+
+    rv = print_card_status(hCard);
+    if (rv != SCARD_S_SUCCESS) {
+        SCardDisconnect(hCard, SCARD_UNPOWER_CARD);
+        return rv;
+    }
+
+    rv = read_card_uid(hCard, pbRecvBuffer, &dwRecvLength);
+    if (rv == SCARD_S_SUCCESS) {
+        process_card(hCard, pbRecvBuffer, dwRecvLength);
+    }
+
+    SCardDisconnect(hCard, SCARD_UNPOWER_CARD);
+    printf("Card disconnected\n");
+    return rv;
+}
+
+LONG print_card_status(SCARDHANDLE hCard) {
+    BYTE pbAtr[MAX_ATR_SIZE];
+    DWORD dwAtrLen = sizeof(pbAtr);
+    DWORD dwState, dwProtocol;
+    char szReader[MAX_READERNAME];
+    DWORD dwReaderLen = sizeof(szReader);
+
+    LONG rv = SCardStatus(hCard, szReader, &dwReaderLen, &dwState, 
+                         &dwProtocol, pbAtr, &dwAtrLen);
+    if (rv != SCARD_S_SUCCESS || dwAtrLen == 0) return rv;
+
+    printf("ATR: ");
+    for (DWORD i = 0; i < dwAtrLen; i++) {
+        printf("%02X", pbAtr[i]);
+    }
+    printf("\n");
+    return SCARD_S_SUCCESS;
+}
+
+LONG read_card_uid(SCARDHANDLE hCard, BYTE *pbRecvBuffer, DWORD *dwRecvLength) {
+    BYTE cmd_get_uid[] = { 0xFF, 0xCA, 0x00, 0x00, 0x00 };
+    *dwRecvLength = sizeof(pbRecvBuffer);
+    printf("Sending Get UID command: FF CA 00 00 00\n");
+    
+    return SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_uid,
+                        sizeof(cmd_get_uid), NULL,
+                        pbRecvBuffer, dwRecvLength);
+}
+
+// Simplified main function
+int main() {
+    curl_global_init(CURL_GLOBAL_ALL);
+    
+    SCARDCONTEXT hContext;
     LONG rv;
-    SCARD_READERSTATE rgReaderStates[1];
     char *reader_name;
+    SCARD_READERSTATE rgReaderStates[1];
 
-    // Initialize PCSC context
-    rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, &hContext);
-    check_status(rv, "Failed to establish context");
+    rv = initialize_pcsc(&hContext, &reader_name);
+    if (rv != SCARD_S_SUCCESS) {
+        printf("Failed to initialize PCSC: %s\n", pcsc_stringify_error(rv));
+        return 1;
+    }
 
-    // List available NFC readers
-    LPTSTR mszReaders;
-    DWORD dwReaders;
-    rv = SCardListReaders(hContext, NULL, NULL, &dwReaders);
-    check_status(rv, "Failed to list readers");
-
-    mszReaders = malloc(dwReaders);
-    rv = SCardListReaders(hContext, NULL, mszReaders, &dwReaders);
-    check_status(rv, "Failed to get reader list");
-
-    reader_name = strdup(mszReaders);
     printf("=== NFC Reader Initialized ===\n");
     printf("Reader: %s\n", reader_name);
     printf("Waiting for cards. Press Ctrl+C to exit.\n");
     printf("==============================\n\n");
 
-    // Set up the reader state
     rgReaderStates[0].szReader = reader_name;
     rgReaderStates[0].dwCurrentState = SCARD_STATE_UNAWARE;
 
     while (1) {
-        // Wait for card status change
         rv = SCardGetStatusChange(hContext, INFINITE, rgReaderStates, 1);
         if (rv != SCARD_S_SUCCESS) {
             printf("Status change error: %s\n", pcsc_stringify_error(rv));
             continue;
         }
 
-        // Print reader state changes
-        DWORD state = rgReaderStates[0].dwEventState;
-        printf("Reader State: ");
-        if (state & SCARD_STATE_EMPTY)        printf("Empty ");
-        if (state & SCARD_STATE_PRESENT)      printf("Card Present ");
-        if (state & SCARD_STATE_MUTE)         printf("Mute ");
-        if (state & SCARD_STATE_UNAVAILABLE)  printf("Unavailable ");
-        printf("\n");
+        print_reader_state(rgReaderStates[0].dwEventState);
 
-        // Check if a card was inserted
-        if (rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT &&
+        // Card inserted
+        if ((rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT) &&
             !(rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT)) {
-            
             printf("\n=== Card Detected ===\n");
-            
-            // Connect to the card
-            rv = SCardConnect(hContext, reader_name, SCARD_SHARE_SHARED,
-                            SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
-                            &hCard, &dwActiveProtocol);
-            
-            if (rv == SCARD_S_SUCCESS) {
-                printf("Protocol: %s\n", 
-                    dwActiveProtocol == SCARD_PROTOCOL_T0 ? "T=0" :
-                    dwActiveProtocol == SCARD_PROTOCOL_T1 ? "T=1" : "Unknown");
-
-                // Get card status
-                BYTE pbAtr[MAX_ATR_SIZE];
-                DWORD dwAtrLen = sizeof(pbAtr);
-                DWORD dwState, dwProtocol;
-                char szReader[MAX_READERNAME];
-                DWORD dwReaderLen = sizeof(szReader);
-
-                rv = SCardStatus(hCard, szReader, &dwReaderLen, &dwState, 
-                               &dwProtocol, pbAtr, &dwAtrLen);
-                
-                if (rv == SCARD_S_SUCCESS && dwAtrLen > 0) {
-                    printf("ATR: ");
-                    for (DWORD i = 0; i < dwAtrLen; i++) {
-                        printf("%02X", pbAtr[i]);
-                    }
-                    printf("\n");
-                }
-
-                // Send command to get NFC UID
-                BYTE cmd_get_uid[] = { 0xFF, 0xCA, 0x00, 0x00, 0x00 };
-                dwRecvLength = sizeof(pbRecvBuffer);
-                printf("Sending Get UID command: FF CA 00 00 00\n");
-                
-                rv = SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_uid,
-                                 sizeof(cmd_get_uid), NULL,
-                                 pbRecvBuffer, &dwRecvLength);
-                
-                if (rv == SCARD_S_SUCCESS) {
-                    process_card(hCard, pbRecvBuffer, dwRecvLength);
-                } else {
-                    printf("Failed to read card UID: %s\n", pcsc_stringify_error(rv));
-                }
-
-                // Disconnect the card
-                SCardDisconnect(hCard, SCARD_UNPOWER_CARD);
-                printf("Card disconnected\n");
-            } else {
-                printf("Failed to connect to card: %s\n", pcsc_stringify_error(rv));
-            }
+            handle_card_connection(hContext, reader_name);
             printf("===================\n\n");
         }
-        
-        // Check if card was removed
+
+        // Card removed
         if (!(rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT) &&
             rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT) {
             printf("Card removed - Waiting for next card\n\n");
         }
 
-        // Update the current state for the next iteration
         rgReaderStates[0].dwCurrentState = rgReaderStates[0].dwEventState;
     }
 
-    // Cleanup
     SCardReleaseContext(hContext);
-    free(mszReaders);
     free(reader_name);
-    
-    // Add cleanup before return
     curl_global_cleanup();
     return 0;
 }
