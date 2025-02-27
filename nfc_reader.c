@@ -212,6 +212,64 @@ void check_status(LONG rv, const char *message) {
     }
 }
 
+// Add these new constants near the top with other defines
+#define MAX_WRITE_ATTEMPTS 3
+#define WRITE_BLOCK_SIZE 16
+
+// Add these constants near the top with other defines
+#define MAX_NAME_LENGTH 50
+#define MAX_EMAIL_LENGTH 100
+#define MAX_PHONE_LENGTH 20
+
+// Add this helper function before main()
+void get_user_info(char *name, char *email, char *phone) {
+    printf("\n[*] User Registration\n");
+    printf("╔══════════════════════════════════════╗\n");
+    
+    printf("Enter name: ");
+    fgets(name, MAX_NAME_LENGTH, stdin);
+    name[strcspn(name, "\n")] = 0;
+    
+    printf("Enter email: ");
+    fgets(email, MAX_EMAIL_LENGTH, stdin);
+    email[strcspn(email, "\n")] = 0;
+    
+    printf("Enter phone: ");
+    fgets(phone, MAX_PHONE_LENGTH, stdin);
+    phone[strcspn(phone, "\n")] = 0;
+    
+    printf("╚══════════════════════════════════════╝\n");
+}
+
+// Add this new function before main()
+int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_length) {
+    BYTE write_command[WRITE_BLOCK_SIZE + 5] = { 0xFF, 0xD6, 0x00, block_number };
+    write_command[4] = data_length;  // Length of data to write
+    
+    // Copy the data into the command buffer
+    memcpy(write_command + 5, data, data_length);
+    
+    BYTE response[32];
+    DWORD response_length = sizeof(response);
+    
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, write_command, data_length + 5,
+                           NULL, response, &response_length);
+    
+    if (rv != SCARD_S_SUCCESS) {
+        printf("[-] Write failed: %s\n", pcsc_stringify_error(rv));
+        return 0;
+    }
+    
+    // Check response (should be 90 00 for success)
+    if (response_length >= 2 && response[0] == 0x90 && response[1] == 0x00) {
+        printf("[+] Write successful\n");
+        return 1;
+    }
+    
+    printf("[-] Write failed: Invalid response\n");
+    return 0;
+}
+
 int main() {
     // Initialize curl before the main loop
     curl_global_init(CURL_GLOBAL_ALL);
@@ -278,7 +336,7 @@ int main() {
             !(rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT)) {
             
             printf("\n╔════════════════════════════════════╗\n");
-            printf("║          Card Detected              ║\n");
+            printf("║          Card Detected             ║\n");
             printf("╚════════════════════════════════════╝\n");
             
             // Connect to the card
@@ -320,6 +378,65 @@ int main() {
                 
                 if (rv == SCARD_S_SUCCESS) {
                     process_card(hCard, pbRecvBuffer, dwRecvLength);
+                    
+                    // After processing, enter interactive mode
+                    printf("\n[*] Card Interactive Mode\n");
+                    printf("[*] Commands: \n");
+                    printf("    w <block> <data> - Write data to block\n");
+                    printf("    r - Register new user\n");
+                    printf("    q - Quit and disconnect\n");
+                    
+                    char cmd[256];
+                    char name[MAX_NAME_LENGTH] = {0};
+                    char email[MAX_EMAIL_LENGTH] = {0};
+                    char phone[MAX_PHONE_LENGTH] = {0};
+                    
+                    while (1) {
+                        printf("\nEnter command (or q to quit): ");
+                        if (fgets(cmd, sizeof(cmd), stdin) == NULL) break;
+                        
+                        // Remove newline
+                        cmd[strcspn(cmd, "\n")] = 0;
+                        
+                        if (cmd[0] == 'q') break;
+                        
+                        if (cmd[0] == 'r') {
+                            get_user_info(name, email, phone);
+                            
+                            // Write name to block 4
+                            printf("[*] Writing name to block 4...\n");
+                            write_to_card(hCard, 4, (BYTE*)name, strlen(name));
+                            
+                            // Write email to block 5
+                            printf("[*] Writing email to block 5...\n");
+                            write_to_card(hCard, 5, (BYTE*)email, strlen(email));
+                            
+                            // Write phone to block 6
+                            printf("[*] Writing phone to block 6...\n");
+                            write_to_card(hCard, 6, (BYTE*)phone, strlen(phone));
+                            
+                            printf("[*] Registration complete!\n");
+                            continue;
+                        }
+                        
+                        if (cmd[0] == 'w') {
+                            int block;
+                            char data[WRITE_BLOCK_SIZE + 1];
+                            if (sscanf(cmd, "w %d %16s", &block, data) == 2) {
+                                DWORD data_len = strlen(data);
+                                if (data_len > WRITE_BLOCK_SIZE) {
+                                    printf("[-] Data too long (max %d bytes)\n", WRITE_BLOCK_SIZE);
+                                    continue;
+                                }
+                                
+                                printf("[*] Writing to block %d: %s\n", block, data);
+                                write_to_card(hCard, (BYTE)block, (BYTE*)data, data_len);
+                            } else {
+                                printf("[-] Invalid write command format\n");
+                                printf("[*] Usage: w <block> <data>\n");
+                            }
+                        }
+                    }
                 } else {
                     printf("[-] Failed to read card UID: %s\n", pcsc_stringify_error(rv));
                 }
