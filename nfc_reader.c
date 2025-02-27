@@ -241,14 +241,14 @@ int main() {
 
     reader_name = strdup(mszReaders);
     printf("\n╔════════════════════════════════════╗\n");
-    printf("║        NFC Reader Initialized      ║\n");
-    printf("╠════════════════════════════════════╣\n");
-    printf("║ Reader:                            ║\n");
+    printf("║        NFC Reader Initialized        ║\n");
+    printf("╠══════════════════════════════════════╣\n");
+    printf("║ Reader:                              ║\n");
     printf("║ %-36s║\n", reader_name);
-    printf("║                                   ║\n");
-    printf("║ Status: Waiting for cards          ║\n");
-    printf("║                                    ║\n");
-    printf("╚════════════════════════════════════╝\n\n");
+    printf("║                                      ║\n");
+    printf("║ Status: Waiting for cards            ║\n");
+    printf("║                                      ║\n");
+    printf("╚══════════════════════════════════════╝\n\n");
 
     // Set up the reader state
     rgReaderStates[0].szReader = reader_name;
