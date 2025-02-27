@@ -243,7 +243,8 @@ int main() {
     printf("\n╔════════════════════════════════════╗\n");
     printf("║        NFC Reader Initialized      ║\n");
     printf("╠════════════════════════════════════╣\n");
-    printf("║ Reader: %-27s║\n", reader_name);
+    printf("║ Reader:                            ║\n");
+    printf("║ %-36s║\n", reader_name);
     printf("║                                    ║\n");
     printf("║ Status: Waiting for cards          ║\n");
     printf("║                                    ║\n");
