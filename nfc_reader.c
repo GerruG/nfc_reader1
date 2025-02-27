@@ -221,6 +221,98 @@ void check_status(LONG rv, const char *message) {
 #define MAX_EMAIL_LENGTH 100
 #define MAX_PHONE_LENGTH 20
 
+// Add these constants for authentication
+#define KEY_A 0x60
+#define KEY_B 0x61
+
+// Add default keys (common for many cards)
+const BYTE DEFAULT_KEY_A[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+const BYTE DEFAULT_KEY_B[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// Add authentication function
+int authenticate_block(SCARDHANDLE hCard, BYTE block_number, BYTE key_type, const BYTE *key) {
+    BYTE auth_command[10] = { 0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, key_type, block_number, 0x00, 0x00 };
+    BYTE response[2];
+    DWORD response_length = sizeof(response);
+
+    printf("[*] Authenticating block %d with key type %s...\n", 
+           block_number, 
+           key_type == KEY_A ? "A" : "B");
+
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, auth_command,
+                           sizeof(auth_command), NULL,
+                           response, &response_length);
+
+    if (rv != SCARD_S_SUCCESS) {
+        printf("[-] Authentication failed: %s\n", pcsc_stringify_error(rv));
+        return 0;
+    }
+
+    if (response_length >= 2 && response[0] == 0x90 && response[1] == 0x00) {
+        printf("[+] Authentication successful\n");
+        return 1;
+    }
+
+    printf("[-] Authentication failed with response: %02X %02X\n", 
+           response[0], response[1]);
+    return 0;
+}
+
+// Update write_to_card function
+int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_length) {
+    // First try to authenticate with key A
+    if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEY_A)) {
+        printf("[*] Key A authentication failed, trying Key B...\n");
+        if (!authenticate_block(hCard, block_number, KEY_B, DEFAULT_KEY_B)) {
+            printf("[-] Could not authenticate with either key\n");
+            return 0;
+        }
+    }
+
+    BYTE write_command[WRITE_BLOCK_SIZE + 5] = { 0xFF, 0xD6, 0x00, block_number };
+    write_command[4] = data_length;  // Length of data to write
+    
+    // Pad data to 16 bytes if needed
+    BYTE padded_data[WRITE_BLOCK_SIZE] = {0};
+    memcpy(padded_data, data, data_length);
+    
+    // Copy the padded data into the command buffer
+    memcpy(write_command + 5, padded_data, WRITE_BLOCK_SIZE);
+    
+    BYTE response[32];
+    DWORD response_length = sizeof(response);
+    
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, write_command, WRITE_BLOCK_SIZE + 5,
+                           NULL, response, &response_length);
+    
+    if (rv != SCARD_S_SUCCESS) {
+        printf("[-] Write failed: %s\n", pcsc_stringify_error(rv));
+        return 0;
+    }
+    
+    // Print detailed response information
+    if (response_length >= 2) {
+        printf("[*] Card response: %02X %02X\n", response[0], response[1]);
+        
+        if (response[0] == 0x90 && response[1] == 0x00) {
+            printf("[+] Write successful\n");
+            return 1;
+        } else if (response[0] == 0x63 && response[1] == 0x00) {
+            printf("[-] Write failed: Authentication required\n");
+        } else if (response[0] == 0x65 && response[1] == 0x81) {
+            printf("[-] Write failed: Memory failure\n");
+        } else if (response[0] == 0x6A && response[1] == 0x82) {
+            printf("[-] Write failed: Block not found\n");
+        } else {
+            printf("[-] Write failed: Unknown error\n");
+        }
+    } else {
+        printf("[-] Write failed: No response from card\n");
+    }
+    
+    return 0;
+}
+
 // Add this helper function before main()
 void get_user_info(char *name, char *email, char *phone) {
     printf("\n[*] User Registration\n");
@@ -242,32 +334,75 @@ void get_user_info(char *name, char *email, char *phone) {
 }
 
 // Add this new function before main()
-int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_length) {
-    BYTE write_command[WRITE_BLOCK_SIZE + 5] = { 0xFF, 0xD6, 0x00, block_number };
-    write_command[4] = data_length;  // Length of data to write
-    
-    // Copy the data into the command buffer
-    memcpy(write_command + 5, data, data_length);
-    
+int read_from_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD *data_length) {
+    // First try to authenticate with key A
+    if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEY_A)) {
+        printf("[*] Key A authentication failed, trying Key B...\n");
+        if (!authenticate_block(hCard, block_number, KEY_B, DEFAULT_KEY_B)) {
+            printf("[-] Could not authenticate with either key\n");
+            return 0;
+        }
+    }
+
+    BYTE read_command[5] = { 0xFF, 0xB0, 0x00, block_number, WRITE_BLOCK_SIZE };
     BYTE response[32];
     DWORD response_length = sizeof(response);
-    
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, write_command, data_length + 5,
+
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, read_command, sizeof(read_command),
                            NULL, response, &response_length);
-    
+
     if (rv != SCARD_S_SUCCESS) {
-        printf("[-] Write failed: %s\n", pcsc_stringify_error(rv));
+        printf("[-] Read failed: %s\n", pcsc_stringify_error(rv));
         return 0;
     }
+
+    if (response_length >= 2) {
+        printf("[*] Card response: %02X %02X\n", 
+               response[response_length-2], response[response_length-1]);
+
+        if (response[response_length-2] == 0x90 && response[response_length-1] == 0x00) {
+            *data_length = response_length - 2;  // Subtract status bytes
+            memcpy(data, response, *data_length);
+            return 1;
+        } else {
+            printf("[-] Read failed with error code\n");
+        }
+    }
+
+    return 0;
+}
+
+// Add this function to read user profile
+void read_user_profile(SCARDHANDLE hCard) {
+    BYTE data[WRITE_BLOCK_SIZE];
+    DWORD data_length;
     
-    // Check response (should be 90 00 for success)
-    if (response_length >= 2 && response[0] == 0x90 && response[1] == 0x00) {
-        printf("[+] Write successful\n");
-        return 1;
+    printf("\n╔══════════════════════════════════════╗\n");
+    printf("║          User Profile Data           ║\n");
+    printf("╠══════════════════════════════════════╣\n");
+
+    // Read name from block 4
+    if (read_from_card(hCard, 4, data, &data_length)) {
+        printf("║ Name: %-30s ║\n", data);
+    } else {
+        printf("║ Name: <not set>                    ║\n");
+    }
+
+    // Read email from block 5
+    if (read_from_card(hCard, 5, data, &data_length)) {
+        printf("║ Email: %-29s ║\n", data);
+    } else {
+        printf("║ Email: <not set>                   ║\n");
+    }
+
+    // Read phone from block 6
+    if (read_from_card(hCard, 6, data, &data_length)) {
+        printf("║ Phone: %-29s ║\n", data);
+    } else {
+        printf("║ Phone: <not set>                   ║\n");
     }
     
-    printf("[-] Write failed: Invalid response\n");
-    return 0;
+    printf("╚══════════════════════════════════════╝\n");
 }
 
 int main() {
@@ -383,8 +518,10 @@ int main() {
                     printf("\n[*] Card Interactive Mode\n");
                     printf("[*] Commands: \n");
                     printf("    w <block> <data> - Write data to block\n");
-                    printf("    r - Register new user\n");
-                    printf("    q - Quit and disconnect\n");
+                    printf("    r <block>        - Read data from block\n");
+                    printf("    p               - Read user profile\n");
+                    printf("    n               - Register new user\n");
+                    printf("    q               - Quit and disconnect\n");
                     
                     char cmd[256];
                     char name[MAX_NAME_LENGTH] = {0};
@@ -400,7 +537,41 @@ int main() {
                         
                         if (cmd[0] == 'q') break;
                         
+                        if (cmd[0] == 'p') {
+                            read_user_profile(hCard);
+                            continue;
+                        }
+                        
                         if (cmd[0] == 'r') {
+                            int block;
+                            if (sscanf(cmd, "r %d", &block) == 1) {
+                                BYTE data[WRITE_BLOCK_SIZE];
+                                DWORD data_length;
+                                
+                                printf("[*] Reading from block %d...\n", block);
+                                if (read_from_card(hCard, (BYTE)block, data, &data_length)) {
+                                    printf("[+] Data (ASCII): ");
+                                    for (DWORD i = 0; i < data_length; i++) {
+                                        if (isprint(data[i])) {
+                                            printf("%c", data[i]);
+                                        } else {
+                                            printf(".");
+                                        }
+                                    }
+                                    printf("\n[+] Data (HEX): ");
+                                    for (DWORD i = 0; i < data_length; i++) {
+                                        printf("%02X ", data[i]);
+                                    }
+                                    printf("\n");
+                                }
+                            } else {
+                                printf("[-] Invalid read command format\n");
+                                printf("[*] Usage: r <block>\n");
+                            }
+                            continue;
+                        }
+                        
+                        if (cmd[0] == 'n') {  // Changed 'r' to 'n' for "new user"
                             get_user_info(name, email, phone);
                             
                             // Write name to block 4
