@@ -230,9 +230,21 @@ void check_status(LONG rv, const char *message) {
 const BYTE DEFAULT_KEY_A[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 const BYTE DEFAULT_KEY_B[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-// Add authentication function
+// Update the authentication function for Mifare Classic
 int authenticate_block(SCARDHANDLE hCard, BYTE block_number, BYTE key_type, const BYTE *key) {
-    BYTE auth_command[10] = { 0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, key_type, block_number, 0x00, 0x00 };
+    // Mifare Classic authentication command
+    BYTE auth_command[12] = { 
+        0xFF,  // CLA
+        0x88,  // INS: EXTERNAL_AUTHENTICATE
+        0x00,  // P1
+        0x00,  // P2
+        0x05,  // Lc: length of authentication data
+        key_type,  // Key type (0x60 for A, 0x61 for B)
+        block_number,  // Block number
+        key[0], key[1], key[2],  // Key bytes 0-2
+        key[3], key[4], key[5]   // Key bytes 3-5
+    };
+    
     BYTE response[2];
     DWORD response_length = sizeof(response);
 
@@ -259,7 +271,54 @@ int authenticate_block(SCARDHANDLE hCard, BYTE block_number, BYTE key_type, cons
     return 0;
 }
 
-// Update write_to_card function
+// Update read_from_card function for Mifare Classic
+int read_from_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD *data_length) {
+    // First try to authenticate with key A
+    if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEY_A)) {
+        printf("[*] Key A authentication failed, trying Key B...\n");
+        if (!authenticate_block(hCard, block_number, KEY_B, DEFAULT_KEY_B)) {
+            printf("[-] Could not authenticate with either key\n");
+            return 0;
+        }
+    }
+
+    // Mifare Classic read command
+    BYTE read_command[5] = { 
+        0xFF,  // CLA
+        0xB0,  // INS: READ BINARY
+        0x00,  // P1
+        block_number,  // P2: Block number
+        0x10   // Le: Expected length (16 bytes for Mifare Classic)
+    };
+    
+    BYTE response[32];
+    DWORD response_length = sizeof(response);
+
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, read_command, sizeof(read_command),
+                           NULL, response, &response_length);
+
+    if (rv != SCARD_S_SUCCESS) {
+        printf("[-] Read failed: %s\n", pcsc_stringify_error(rv));
+        return 0;
+    }
+
+    if (response_length >= 2) {
+        printf("[*] Card response: %02X %02X\n", 
+               response[response_length-2], response[response_length-1]);
+
+        if (response[response_length-2] == 0x90 && response[response_length-1] == 0x00) {
+            *data_length = response_length - 2;  // Subtract status bytes
+            memcpy(data, response, *data_length);
+            return 1;
+        } else {
+            printf("[-] Read failed with error code\n");
+        }
+    }
+
+    return 0;
+}
+
+// Update write_to_card function for Mifare Classic
 int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_length) {
     // First try to authenticate with key A
     if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEY_A)) {
@@ -270,20 +329,26 @@ int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_l
         }
     }
 
-    BYTE write_command[WRITE_BLOCK_SIZE + 5] = { 0xFF, 0xD6, 0x00, block_number };
-    write_command[4] = data_length;  // Length of data to write
+    // Mifare Classic write command
+    BYTE write_command[21] = { 
+        0xFF,  // CLA
+        0xD6,  // INS: UPDATE BINARY
+        0x00,  // P1
+        block_number,  // P2: Block number
+        0x10   // Lc: Length to write (always 16 for Mifare Classic)
+    };
     
-    // Pad data to 16 bytes if needed
-    BYTE padded_data[WRITE_BLOCK_SIZE] = {0};
-    memcpy(padded_data, data, data_length);
+    // Pad data to 16 bytes
+    BYTE padded_data[16] = {0};
+    memcpy(padded_data, data, data_length > 16 ? 16 : data_length);
     
     // Copy the padded data into the command buffer
-    memcpy(write_command + 5, padded_data, WRITE_BLOCK_SIZE);
+    memcpy(write_command + 5, padded_data, 16);
     
-    BYTE response[32];
+    BYTE response[2];
     DWORD response_length = sizeof(response);
     
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, write_command, WRITE_BLOCK_SIZE + 5,
+    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, write_command, sizeof(write_command),
                            NULL, response, &response_length);
     
     if (rv != SCARD_S_SUCCESS) {
@@ -298,14 +363,20 @@ int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_l
         if (response[0] == 0x90 && response[1] == 0x00) {
             printf("[+] Write successful\n");
             return 1;
-        } else if (response[0] == 0x63 && response[1] == 0x00) {
-            printf("[-] Write failed: Authentication required\n");
-        } else if (response[0] == 0x65 && response[1] == 0x81) {
-            printf("[-] Write failed: Memory failure\n");
-        } else if (response[0] == 0x6A && response[1] == 0x82) {
-            printf("[-] Write failed: Block not found\n");
         } else {
-            printf("[-] Write failed: Unknown error\n");
+            switch (response[0]) {
+                case 0x63:
+                    printf("[-] Write failed: Authentication required\n");
+                    break;
+                case 0x65:
+                    printf("[-] Write failed: Memory failure\n");
+                    break;
+                case 0x6A:
+                    printf("[-] Write failed: Block not found\n");
+                    break;
+                default:
+                    printf("[-] Write failed: Unknown error\n");
+            }
         }
     } else {
         printf("[-] Write failed: No response from card\n");
@@ -345,7 +416,14 @@ int read_from_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD *data
         }
     }
 
-    BYTE read_command[5] = { 0xFF, 0xB0, 0x00, block_number, WRITE_BLOCK_SIZE };
+    BYTE read_command[5] = { 
+        0xFF,  // CLA
+        0xB0,  // INS: READ BINARY
+        0x00,  // P1
+        block_number,  // P2: Block number
+        0x10   // Le: Expected length (16 bytes for Mifare Classic)
+    };
+    
     BYTE response[32];
     DWORD response_length = sizeof(response);
 
