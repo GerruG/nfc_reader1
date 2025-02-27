@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <ctype.h>
 
 // PCSC includes - make sure these are in the right order
 #include <PCSC/wintypes.h>
@@ -95,19 +94,22 @@ int check_card_authorization(const char *uid_hex) {
     char url[256];
     
     // Construct the URL with the UID
-    snprintf(url, sizeof(url), "%s/check/%s", api_url, uid_hex);
+    snprintf(url, sizeof(url), "http://192.168.20.152:3000/check-access/%s", uid_hex);
     
     struct json_object *json_response = NULL;
-    char *response_data = NULL;
     
     curl = curl_easy_init();
     if (curl) {
+        char *response_data = NULL;
+        size_t response_size = 0;
+        
+        // Setup curl to write to our buffer
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
         
         res = curl_easy_perform(curl);
-        if (res == CURLE_OK && response_data) {
+        if (res == CURLE_OK) {
             json_response = json_tokener_parse(response_data);
             if (json_response) {
                 struct json_object *auth_obj;
@@ -116,9 +118,6 @@ int check_card_authorization(const char *uid_hex) {
                 }
                 json_object_put(json_response);
             }
-        } else {
-            printf("[-] Failed to check authorization: %s\n", 
-                   curl_easy_strerror(res));
         }
         
         free(response_data);
@@ -155,9 +154,7 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     
     // Check if card is authorized
     int is_authorized = check_card_authorization(uid_hex);
-    printf("[%c] Card authorization: %s\n", 
-           is_authorized ? '+' : '-',
-           is_authorized ? "Authorized" : "Not authorized");
+    printf("Card authorization status: %s\n", is_authorized ? "Authorized" : "Not authorized");
     
     // Create JSON payload matching server expectations
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
@@ -195,14 +192,15 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     
     handle_card_response(response, response_length, &uid, &uid_length);
     if (uid == NULL || uid_length == 0) {
-        printf("[-] Invalid card response\n");
+        printf("Invalid card response\n");
         return;
     }
     
-    printf("[+] Card UID: ");
+    printf("\nCard UID: ");
     print_uid(uid, uid_length);
     printf("\n");
     
+    // Send only UID data to API
     send_card_data_to_api(uid, uid_length);
 }
 
@@ -211,266 +209,6 @@ void check_status(LONG rv, const char *message) {
         printf("%s: %s\n", message, pcsc_stringify_error(rv));
         exit(1);
     }
-}
-
-// Add these new constants near the top with other defines
-#define MAX_WRITE_ATTEMPTS 3
-#define WRITE_BLOCK_SIZE 16
-
-// Add these constants near the top with other defines
-#define MAX_NAME_LENGTH 50
-#define MAX_EMAIL_LENGTH 100
-#define MAX_PHONE_LENGTH 20
-
-// Add these constants for authentication
-#define KEY_A 0x60
-#define KEY_B 0x61
-
-// Add more common keys
-const BYTE DEFAULT_KEYS[][6] = {
-    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // Most common default
-    {0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}, // Common alternative
-    {0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7}, // Common in some systems
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // All zeros
-    {0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5}, // Another common key
-    {0x4D, 0x3A, 0x99, 0xC3, 0x51, 0xDD}  // Common in access control
-};
-#define NUM_KEYS (sizeof(DEFAULT_KEYS) / sizeof(DEFAULT_KEYS[0]))
-
-// Update authenticate_block function to try direct authentication
-int authenticate_block(SCARDHANDLE hCard, BYTE block_number, BYTE key_type, const BYTE *key) {
-    // Try direct authentication first
-    BYTE direct_auth[12] = {
-        0xFF, 0x88, 0x00, block_number,
-        0x60, // Authentication with key A
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF // Default key
-    };
-    
-    BYTE response[2];
-    DWORD response_length = sizeof(response);
-    
-    printf("[*] Trying direct authentication for block %d...\n", block_number);
-    
-    // Try each key
-    for(int i = 0; i < NUM_KEYS; i++) {
-        // Update key in authentication command
-        memcpy(direct_auth + 6, DEFAULT_KEYS[i], 6);
-        
-        LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, direct_auth,
-                               sizeof(direct_auth), NULL,
-                               response, &response_length);
-        
-        if (rv == SCARD_S_SUCCESS && 
-            response_length >= 2 && 
-            response[0] == 0x90 && 
-            response[1] == 0x00) {
-            printf("[+] Authentication successful with key set %d\n", i);
-            return 1;
-        }
-        
-        // Try key B if key A failed
-        direct_auth[4] = 0x61; // Switch to key B
-        rv = SCardTransmit(hCard, SCARD_PCI_T1, direct_auth,
-                          sizeof(direct_auth), NULL,
-                          response, &response_length);
-        
-        if (rv == SCARD_S_SUCCESS && 
-            response_length >= 2 && 
-            response[0] == 0x90 && 
-            response[1] == 0x00) {
-            printf("[+] Authentication successful with key B set %d\n", i);
-            return 1;
-        }
-    }
-    
-    // If direct authentication failed, try the original method
-    BYTE auth_command[10] = { 
-        0xFF, 0x86, 0x00, 0x00, 0x05, 0x01,
-        key_type, block_number, 0x00, 0x00
-    };
-    
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, auth_command,
-                           sizeof(auth_command), NULL,
-                           response, &response_length);
-
-    if (rv == SCARD_S_SUCCESS && 
-        response_length >= 2 && 
-        response[0] == 0x90 && 
-        response[1] == 0x00) {
-        printf("[+] Authentication successful with standard method\n");
-        return 1;
-    }
-
-    // If all authentication methods fail, try to proceed without authentication
-    printf("[*] All authentication methods failed, attempting to proceed...\n");
-    return 1; // Return success anyway to try the operation
-}
-
-// Update read_from_card function for Mifare Classic
-int read_from_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD *data_length) {
-    // First try to authenticate with key A
-    if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEYS[0])) {
-        printf("[*] Key A authentication failed, trying Key B...\n");
-        if (!authenticate_block(hCard, block_number, KEY_B, DEFAULT_KEYS[0])) {
-            printf("[-] Could not authenticate with either key\n");
-            return 0;
-        }
-    }
-
-    // Mifare Classic read command
-    BYTE read_command[5] = { 
-        0xFF,  // CLA
-        0xB0,  // INS: READ BINARY
-        0x00,  // P1
-        block_number,  // P2: Block number
-        0x10   // Le: Expected length (16 bytes for Mifare Classic)
-    };
-    
-    BYTE response[32];
-    DWORD response_length = sizeof(response);
-
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, read_command, sizeof(read_command),
-                           NULL, response, &response_length);
-
-    if (rv != SCARD_S_SUCCESS) {
-        printf("[-] Read failed: %s\n", pcsc_stringify_error(rv));
-        return 0;
-    }
-
-    if (response_length >= 2) {
-        printf("[*] Card response: %02X %02X\n", 
-               response[response_length-2], response[response_length-1]);
-
-        if (response[response_length-2] == 0x90 && response[response_length-1] == 0x00) {
-            *data_length = response_length - 2;  // Subtract status bytes
-            memcpy(data, response, *data_length);
-            return 1;
-        } else {
-            printf("[-] Read failed with error code\n");
-        }
-    }
-
-    return 0;
-}
-
-// Update write_to_card function for Mifare Classic
-int write_to_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD data_length) {
-    // First try to authenticate with key A
-    if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEYS[0])) {
-        printf("[*] Key A authentication failed, trying Key B...\n");
-        if (!authenticate_block(hCard, block_number, KEY_B, DEFAULT_KEYS[0])) {
-            printf("[-] Could not authenticate with either key\n");
-            return 0;
-        }
-    }
-
-    // Mifare Classic write command
-    BYTE write_command[21] = { 
-        0xFF,  // CLA
-        0xD6,  // INS: UPDATE BINARY
-        0x00,  // P1
-        block_number,  // P2: Block number
-        0x10   // Lc: Length to write (always 16 for Mifare Classic)
-    };
-    
-    // Pad data to 16 bytes
-    BYTE padded_data[16] = {0};
-    memcpy(padded_data, data, data_length > 16 ? 16 : data_length);
-    
-    // Copy the padded data into the command buffer
-    memcpy(write_command + 5, padded_data, 16);
-    
-    BYTE response[2];
-    DWORD response_length = sizeof(response);
-    
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, write_command, sizeof(write_command),
-                           NULL, response, &response_length);
-    
-    if (rv != SCARD_S_SUCCESS) {
-        printf("[-] Write failed: %s\n", pcsc_stringify_error(rv));
-        return 0;
-    }
-    
-    // Print detailed response information
-    if (response_length >= 2) {
-        printf("[*] Card response: %02X %02X\n", response[0], response[1]);
-        
-        if (response[0] == 0x90 && response[1] == 0x00) {
-            printf("[+] Write successful\n");
-            return 1;
-        } else {
-            switch (response[0]) {
-                case 0x63:
-                    printf("[-] Write failed: Authentication required\n");
-                    break;
-                case 0x65:
-                    printf("[-] Write failed: Memory failure\n");
-                    break;
-                case 0x6A:
-                    printf("[-] Write failed: Block not found\n");
-                    break;
-                default:
-                    printf("[-] Write failed: Unknown error\n");
-            }
-        }
-    } else {
-        printf("[-] Write failed: No response from card\n");
-    }
-    
-    return 0;
-}
-
-// Add this helper function before main()
-void get_user_info(char *name, char *email, char *phone) {
-    printf("\n[*] User Registration\n");
-    printf("╔══════════════════════════════════════╗\n");
-    
-    printf("Enter name: ");
-    fgets(name, MAX_NAME_LENGTH, stdin);
-    name[strcspn(name, "\n")] = 0;
-    
-    printf("Enter email: ");
-    fgets(email, MAX_EMAIL_LENGTH, stdin);
-    email[strcspn(email, "\n")] = 0;
-    
-    printf("Enter phone: ");
-    fgets(phone, MAX_PHONE_LENGTH, stdin);
-    phone[strcspn(phone, "\n")] = 0;
-    
-    printf("╚══════════════════════════════════════╝\n");
-}
-
-// Add this function to read user profile
-void read_user_profile(SCARDHANDLE hCard) {
-    BYTE data[WRITE_BLOCK_SIZE];
-    DWORD data_length;
-    
-    printf("\n╔══════════════════════════════════════╗\n");
-    printf("║          User Profile Data           ║\n");
-    printf("╠══════════════════════════════════════╣\n");
-
-    // Read name from block 4
-    if (read_from_card(hCard, 4, data, &data_length)) {
-        printf("║ Name: %-30s ║\n", data);
-    } else {
-        printf("║ Name: <not set>                    ║\n");
-    }
-
-    // Read email from block 5
-    if (read_from_card(hCard, 5, data, &data_length)) {
-        printf("║ Email: %-29s ║\n", data);
-    } else {
-        printf("║ Email: <not set>                   ║\n");
-    }
-
-    // Read phone from block 6
-    if (read_from_card(hCard, 6, data, &data_length)) {
-        printf("║ Phone: %-29s ║\n", data);
-    } else {
-        printf("║ Phone: <not set>                   ║\n");
-    }
-    
-    printf("╚══════════════════════════════════════╝\n");
 }
 
 int main() {
@@ -501,15 +239,10 @@ int main() {
     check_status(rv, "Failed to get reader list");
 
     reader_name = strdup(mszReaders);
-    printf("\n╔══════════════════════════════════════╗\n");
-    printf("║        NFC Reader Initialized        ║\n");
-    printf("╠══════════════════════════════════════╣\n");
-    printf("║ Reader:                              ║\n");
-    printf("║ %-36s ║\n", reader_name);
-    printf("║                                      ║\n");
-    printf("║ Status: Waiting for cards            ║\n");
-    printf("║                                      ║\n");
-    printf("╚══════════════════════════════════════╝\n\n");
+    printf("=== NFC Reader Initialized ===\n");
+    printf("Reader: %s\n", reader_name);
+    printf("Waiting for cards. Press Ctrl+C to exit.\n");
+    printf("==============================\n\n");
 
     // Set up the reader state
     rgReaderStates[0].szReader = reader_name;
@@ -519,28 +252,24 @@ int main() {
         // Wait for card status change
         rv = SCardGetStatusChange(hContext, INFINITE, rgReaderStates, 1);
         if (rv != SCARD_S_SUCCESS) {
-            printf("[-] Status change error: %s\n", pcsc_stringify_error(rv));
+            printf("Status change error: %s\n", pcsc_stringify_error(rv));
             continue;
         }
 
-        // Print reader state changes (only if there's a change)
-        if (rgReaderStates[0].dwEventState != rgReaderStates[0].dwCurrentState) {
-            DWORD state = rgReaderStates[0].dwEventState;
-            printf("[*] Reader State: ");
-            if (state & SCARD_STATE_EMPTY)        printf("Empty");
-            if (state & SCARD_STATE_PRESENT)      printf("Card Present");
-            if (state & SCARD_STATE_MUTE)         printf("Mute");
-            if (state & SCARD_STATE_UNAVAILABLE)  printf("Unavailable");
-            printf("\n");
-        }
+        // Print reader state changes
+        DWORD state = rgReaderStates[0].dwEventState;
+        printf("Reader State: ");
+        if (state & SCARD_STATE_EMPTY)        printf("Empty ");
+        if (state & SCARD_STATE_PRESENT)      printf("Card Present ");
+        if (state & SCARD_STATE_MUTE)         printf("Mute ");
+        if (state & SCARD_STATE_UNAVAILABLE)  printf("Unavailable ");
+        printf("\n");
 
         // Check if a card was inserted
         if (rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT &&
             !(rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT)) {
             
-            printf("\n╔════════════════════════════════════╗\n");
-            printf("║          Card Detected             ║\n");
-            printf("╚════════════════════════════════════╝\n");
+            printf("\n=== Card Detected ===\n");
             
             // Connect to the card
             rv = SCardConnect(hContext, reader_name, SCARD_SHARE_SHARED,
@@ -548,7 +277,7 @@ int main() {
                             &hCard, &dwActiveProtocol);
             
             if (rv == SCARD_S_SUCCESS) {
-                printf("[+] Connected using protocol: %s\n", 
+                printf("Protocol: %s\n", 
                     dwActiveProtocol == SCARD_PROTOCOL_T0 ? "T=0" :
                     dwActiveProtocol == SCARD_PROTOCOL_T1 ? "T=1" : "Unknown");
 
@@ -563,7 +292,7 @@ int main() {
                                &dwProtocol, pbAtr, &dwAtrLen);
                 
                 if (rv == SCARD_S_SUCCESS && dwAtrLen > 0) {
-                    printf("[+] ATR: ");
+                    printf("ATR: ");
                     for (DWORD i = 0; i < dwAtrLen; i++) {
                         printf("%02X", pbAtr[i]);
                     }
@@ -573,7 +302,7 @@ int main() {
                 // Send command to get NFC UID
                 BYTE cmd_get_uid[] = { 0xFF, 0xCA, 0x00, 0x00, 0x00 };
                 dwRecvLength = sizeof(pbRecvBuffer);
-                printf("[*] Reading card UID...\n");
+                printf("Sending Get UID command: FF CA 00 00 00\n");
                 
                 rv = SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_uid,
                                  sizeof(cmd_get_uid), NULL,
@@ -581,118 +310,23 @@ int main() {
                 
                 if (rv == SCARD_S_SUCCESS) {
                     process_card(hCard, pbRecvBuffer, dwRecvLength);
-                    
-                    // After processing, enter interactive mode
-                    printf("\n[*] Card Interactive Mode\n");
-                    printf("[*] Commands: \n");
-                    printf("    w <block> <data> - Write data to block\n");
-                    printf("    r <block>        - Read data from block\n");
-                    printf("    p               - Read user profile\n");
-                    printf("    n               - Register new user\n");
-                    printf("    q               - Quit and disconnect\n");
-                    
-                    char cmd[256];
-                    char name[MAX_NAME_LENGTH] = {0};
-                    char email[MAX_EMAIL_LENGTH] = {0};
-                    char phone[MAX_PHONE_LENGTH] = {0};
-                    
-                    while (1) {
-                        printf("\nEnter command (or q to quit): ");
-                        if (fgets(cmd, sizeof(cmd), stdin) == NULL) break;
-                        
-                        // Remove newline
-                        cmd[strcspn(cmd, "\n")] = 0;
-                        
-                        if (cmd[0] == 'q') break;
-                        
-                        if (cmd[0] == 'p') {
-                            read_user_profile(hCard);
-                            continue;
-                        }
-                        
-                        if (cmd[0] == 'r') {
-                            int block;
-                            if (sscanf(cmd, "r %d", &block) == 1) {
-                                BYTE data[WRITE_BLOCK_SIZE];
-                                DWORD data_length;
-                                
-                                printf("[*] Reading from block %d...\n", block);
-                                if (read_from_card(hCard, (BYTE)block, data, &data_length)) {
-                                    printf("[+] Data (ASCII): ");
-                                    for (DWORD i = 0; i < data_length; i++) {
-                                        if (isprint(data[i])) {
-                                            printf("%c", data[i]);
-                                        } else {
-                                            printf(".");
-                                        }
-                                    }
-                                    printf("\n[+] Data (HEX): ");
-                                    for (DWORD i = 0; i < data_length; i++) {
-                                        printf("%02X ", data[i]);
-                                    }
-                                    printf("\n");
-                                }
-                            } else {
-                                printf("[-] Invalid read command format\n");
-                                printf("[*] Usage: r <block>\n");
-                            }
-                            continue;
-                        }
-                        
-                        if (cmd[0] == 'n') {  // Changed 'r' to 'n' for "new user"
-                            get_user_info(name, email, phone);
-                            
-                            // Write name to block 4
-                            printf("[*] Writing name to block 4...\n");
-                            write_to_card(hCard, 4, (BYTE*)name, strlen(name));
-                            
-                            // Write email to block 5
-                            printf("[*] Writing email to block 5...\n");
-                            write_to_card(hCard, 5, (BYTE*)email, strlen(email));
-                            
-                            // Write phone to block 6
-                            printf("[*] Writing phone to block 6...\n");
-                            write_to_card(hCard, 6, (BYTE*)phone, strlen(phone));
-                            
-                            printf("[*] Registration complete!\n");
-                            continue;
-                        }
-                        
-                        if (cmd[0] == 'w') {
-                            int block;
-                            char data[WRITE_BLOCK_SIZE + 1];
-                            if (sscanf(cmd, "w %d %16s", &block, data) == 2) {
-                                DWORD data_len = strlen(data);
-                                if (data_len > WRITE_BLOCK_SIZE) {
-                                    printf("[-] Data too long (max %d bytes)\n", WRITE_BLOCK_SIZE);
-                                    continue;
-                                }
-                                
-                                printf("[*] Writing to block %d: %s\n", block, data);
-                                write_to_card(hCard, (BYTE)block, (BYTE*)data, data_len);
-                            } else {
-                                printf("[-] Invalid write command format\n");
-                                printf("[*] Usage: w <block> <data>\n");
-                            }
-                        }
-                    }
                 } else {
-                    printf("[-] Failed to read card UID: %s\n", pcsc_stringify_error(rv));
+                    printf("Failed to read card UID: %s\n", pcsc_stringify_error(rv));
                 }
 
                 // Disconnect the card
                 SCardDisconnect(hCard, SCARD_UNPOWER_CARD);
-                printf("[*] Card disconnected\n");
+                printf("Card disconnected\n");
             } else {
-                printf("[-] Failed to connect to card: %s\n", pcsc_stringify_error(rv));
+                printf("Failed to connect to card: %s\n", pcsc_stringify_error(rv));
             }
-            printf("\n");
+            printf("===================\n\n");
         }
         
         // Check if card was removed
         if (!(rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT) &&
             rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT) {
-            printf("[*] Card removed - Waiting for next card\n\n");
+            printf("Card removed - Waiting for next card\n\n");
         }
 
         // Update the current state for the next iteration
