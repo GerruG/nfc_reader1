@@ -405,52 +405,6 @@ void get_user_info(char *name, char *email, char *phone) {
     printf("╚══════════════════════════════════════╝\n");
 }
 
-// Add this new function before main()
-int read_from_card(SCARDHANDLE hCard, BYTE block_number, BYTE *data, DWORD *data_length) {
-    // First try to authenticate with key A
-    if (!authenticate_block(hCard, block_number, KEY_A, DEFAULT_KEY_A)) {
-        printf("[*] Key A authentication failed, trying Key B...\n");
-        if (!authenticate_block(hCard, block_number, KEY_B, DEFAULT_KEY_B)) {
-            printf("[-] Could not authenticate with either key\n");
-            return 0;
-        }
-    }
-
-    BYTE read_command[5] = { 
-        0xFF,  // CLA
-        0xB0,  // INS: READ BINARY
-        0x00,  // P1
-        block_number,  // P2: Block number
-        0x10   // Le: Expected length (16 bytes for Mifare Classic)
-    };
-    
-    BYTE response[32];
-    DWORD response_length = sizeof(response);
-
-    LONG rv = SCardTransmit(hCard, SCARD_PCI_T1, read_command, sizeof(read_command),
-                           NULL, response, &response_length);
-
-    if (rv != SCARD_S_SUCCESS) {
-        printf("[-] Read failed: %s\n", pcsc_stringify_error(rv));
-        return 0;
-    }
-
-    if (response_length >= 2) {
-        printf("[*] Card response: %02X %02X\n", 
-               response[response_length-2], response[response_length-1]);
-
-        if (response[response_length-2] == 0x90 && response[response_length-1] == 0x00) {
-            *data_length = response_length - 2;  // Subtract status bytes
-            memcpy(data, response, *data_length);
-            return 1;
-        } else {
-            printf("[-] Read failed with error code\n");
-        }
-    }
-
-    return 0;
-}
-
 // Add this function to read user profile
 void read_user_profile(SCARDHANDLE hCard) {
     BYTE data[WRITE_BLOCK_SIZE];
