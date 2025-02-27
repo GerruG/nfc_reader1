@@ -233,16 +233,17 @@ const BYTE DEFAULT_KEY_B[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 // Update the authentication function for Mifare Classic
 int authenticate_block(SCARDHANDLE hCard, BYTE block_number, BYTE key_type, const BYTE *key) {
     // Mifare Classic authentication command
-    BYTE auth_command[12] = { 
+    BYTE auth_command[10] = { 
         0xFF,  // CLA
-        0x88,  // INS: EXTERNAL_AUTHENTICATE
+        0x86,  // INS: EXTERNAL_AUTHENTICATE
         0x00,  // P1
         0x00,  // P2
         0x05,  // Lc: length of authentication data
+        0x01,  // Data byte: Version
         key_type,  // Key type (0x60 for A, 0x61 for B)
         block_number,  // Block number
-        key[0], key[1], key[2],  // Key bytes 0-2
-        key[3], key[4], key[5]   // Key bytes 3-5
+        0x00,  // Key number
+        0x00   // RFU (Reserved for Future Use)
     };
     
     BYTE response[2];
