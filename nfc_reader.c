@@ -240,7 +240,7 @@ int main() {
     check_status(rv, "Failed to get reader list");
 
     reader_name = strdup(mszReaders);
-    printf("\n╔════════════════════════════════════╗\n");
+    printf("\n╔══════════════════════════════════════╗\n");
     printf("║        NFC Reader Initialized        ║\n");
     printf("╠══════════════════════════════════════╣\n");
     printf("║ Reader:                              ║\n");
