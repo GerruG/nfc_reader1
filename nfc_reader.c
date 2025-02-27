@@ -154,7 +154,9 @@ void send_card_data_to_api(BYTE *uid, size_t uid_length) {
     
     // Check if card is authorized
     int is_authorized = check_card_authorization(uid_hex);
-    printf("Card authorization status: %s\n", is_authorized ? "Authorized" : "Not authorized");
+    printf("[%c] Card authorization: %s\n", 
+           is_authorized ? '+' : '-',
+           is_authorized ? "Authorized" : "Not authorized");
     
     // Create JSON payload matching server expectations
     json_object_object_add(json_obj, "uid", json_object_new_string(uid_hex));
@@ -192,15 +194,14 @@ void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length) {
     
     handle_card_response(response, response_length, &uid, &uid_length);
     if (uid == NULL || uid_length == 0) {
-        printf("Invalid card response\n");
+        printf("[-] Invalid card response\n");
         return;
     }
     
-    printf("\nCard UID: ");
+    printf("[+] Card UID: ");
     print_uid(uid, uid_length);
     printf("\n");
     
-    // Send only UID data to API
     send_card_data_to_api(uid, uid_length);
 }
 
@@ -239,10 +240,12 @@ int main() {
     check_status(rv, "Failed to get reader list");
 
     reader_name = strdup(mszReaders);
-    printf("=== NFC Reader Initialized ===\n");
-    printf("Reader: %s\n", reader_name);
-    printf("Waiting for cards. Press Ctrl+C to exit.\n");
-    printf("==============================\n\n");
+    printf("\n╔════════════════════════════════════╗\n");
+    printf("║        NFC Reader Initialized       ║\n");
+    printf("╠════════════════════════════════════╣\n");
+    printf("║ Reader: %-27s║\n", reader_name);
+    printf("║ Status: Waiting for cards          ║\n");
+    printf("╚════════════════════════════════════╝\n\n");
 
     // Set up the reader state
     rgReaderStates[0].szReader = reader_name;
@@ -252,24 +255,28 @@ int main() {
         // Wait for card status change
         rv = SCardGetStatusChange(hContext, INFINITE, rgReaderStates, 1);
         if (rv != SCARD_S_SUCCESS) {
-            printf("Status change error: %s\n", pcsc_stringify_error(rv));
+            printf("[-] Status change error: %s\n", pcsc_stringify_error(rv));
             continue;
         }
 
-        // Print reader state changes
-        DWORD state = rgReaderStates[0].dwEventState;
-        printf("Reader State: ");
-        if (state & SCARD_STATE_EMPTY)        printf("Empty ");
-        if (state & SCARD_STATE_PRESENT)      printf("Card Present ");
-        if (state & SCARD_STATE_MUTE)         printf("Mute ");
-        if (state & SCARD_STATE_UNAVAILABLE)  printf("Unavailable ");
-        printf("\n");
+        // Print reader state changes (only if there's a change)
+        if (rgReaderStates[0].dwEventState != rgReaderStates[0].dwCurrentState) {
+            DWORD state = rgReaderStates[0].dwEventState;
+            printf("[*] Reader State: ");
+            if (state & SCARD_STATE_EMPTY)        printf("Empty");
+            if (state & SCARD_STATE_PRESENT)      printf("Card Present");
+            if (state & SCARD_STATE_MUTE)         printf("Mute");
+            if (state & SCARD_STATE_UNAVAILABLE)  printf("Unavailable");
+            printf("\n");
+        }
 
         // Check if a card was inserted
         if (rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT &&
             !(rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT)) {
             
-            printf("\n=== Card Detected ===\n");
+            printf("\n╔════════════════════════════════════╗\n");
+            printf("║          Card Detected              ║\n");
+            printf("╚════════════════════════════════════╝\n");
             
             // Connect to the card
             rv = SCardConnect(hContext, reader_name, SCARD_SHARE_SHARED,
@@ -277,7 +284,7 @@ int main() {
                             &hCard, &dwActiveProtocol);
             
             if (rv == SCARD_S_SUCCESS) {
-                printf("Protocol: %s\n", 
+                printf("[+] Connected using protocol: %s\n", 
                     dwActiveProtocol == SCARD_PROTOCOL_T0 ? "T=0" :
                     dwActiveProtocol == SCARD_PROTOCOL_T1 ? "T=1" : "Unknown");
 
@@ -292,7 +299,7 @@ int main() {
                                &dwProtocol, pbAtr, &dwAtrLen);
                 
                 if (rv == SCARD_S_SUCCESS && dwAtrLen > 0) {
-                    printf("ATR: ");
+                    printf("[+] ATR: ");
                     for (DWORD i = 0; i < dwAtrLen; i++) {
                         printf("%02X", pbAtr[i]);
                     }
@@ -302,7 +309,7 @@ int main() {
                 // Send command to get NFC UID
                 BYTE cmd_get_uid[] = { 0xFF, 0xCA, 0x00, 0x00, 0x00 };
                 dwRecvLength = sizeof(pbRecvBuffer);
-                printf("Sending Get UID command: FF CA 00 00 00\n");
+                printf("[*] Reading card UID...\n");
                 
                 rv = SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_uid,
                                  sizeof(cmd_get_uid), NULL,
@@ -311,22 +318,22 @@ int main() {
                 if (rv == SCARD_S_SUCCESS) {
                     process_card(hCard, pbRecvBuffer, dwRecvLength);
                 } else {
-                    printf("Failed to read card UID: %s\n", pcsc_stringify_error(rv));
+                    printf("[-] Failed to read card UID: %s\n", pcsc_stringify_error(rv));
                 }
 
                 // Disconnect the card
                 SCardDisconnect(hCard, SCARD_UNPOWER_CARD);
-                printf("Card disconnected\n");
+                printf("[*] Card disconnected\n");
             } else {
-                printf("Failed to connect to card: %s\n", pcsc_stringify_error(rv));
+                printf("[-] Failed to connect to card: %s\n", pcsc_stringify_error(rv));
             }
-            printf("===================\n\n");
+            printf("\n");
         }
         
         // Check if card was removed
         if (!(rgReaderStates[0].dwEventState & SCARD_STATE_PRESENT) &&
             rgReaderStates[0].dwCurrentState & SCARD_STATE_PRESENT) {
-            printf("Card removed - Waiting for next card\n\n");
+            printf("[*] Card removed - Waiting for next card\n\n");
         }
 
         // Update the current state for the next iteration
