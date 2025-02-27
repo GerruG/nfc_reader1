@@ -245,7 +245,7 @@ int main() {
     printf("╠════════════════════════════════════╣\n");
     printf("║ Reader:                            ║\n");
     printf("║ %-36s║\n", reader_name);
-    printf("║                                    ║\n");
+    printf("║                                   ║\n");
     printf("║ Status: Waiting for cards          ║\n");
     printf("║                                    ║\n");
     printf("╚════════════════════════════════════╝\n\n");
