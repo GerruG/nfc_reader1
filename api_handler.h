@@ -4,6 +4,8 @@
 #include <PCSC/winscard.h>
 #include <stddef.h>
 
+typedef unsigned char BYTE;
+
 // Function declarations
 void send_card_data_to_api(BYTE *uid, size_t uid_length);
 int check_card_authorization(const char *uid_hex);
