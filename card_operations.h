@@ -1,10 +1,8 @@
 #ifndef CARD_OPERATIONS_H
 #define CARD_OPERATIONS_H
 
-// Change PCSC includes to match Linux paths
+// Only include winscard.h as it includes the other necessary headers
 #include <PCSC/winscard.h>
-#include <PCSC/reader.h>
-#include <PCSC/pcsclite.h>
 
 // Constants
 #define MAX_ATR_SIZE 33
