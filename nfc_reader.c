@@ -60,6 +60,20 @@
 // Update the API URL to match your setup
 static const char *api_url = "http://192.168.20.152:3000/card-access";
 
+// Forward declarations of all functions
+void print_uid(BYTE *uid, size_t length);
+void handle_card_response(BYTE *response, DWORD length, BYTE **uid, size_t *uid_length);
+size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata);
+int check_card_authorization(const char *uid_hex);
+void send_card_data_to_api(BYTE *uid, size_t uid_length);
+void process_card(SCARDHANDLE hCard, BYTE *response, DWORD response_length);
+void check_status(LONG rv, const char *message);
+LONG print_card_status(SCARDHANDLE hCard);
+LONG read_card_uid(SCARDHANDLE hCard, BYTE *pbRecvBuffer, DWORD *dwRecvLength);
+LONG handle_card_connection(SCARDCONTEXT hContext, const char *reader_name);
+void print_reader_state(DWORD state);
+LONG initialize_pcsc(SCARDCONTEXT *hContext, char **reader_name);
+
 // Add these helper functions that were removed earlier
 void print_uid(BYTE *uid, size_t length) {
     for (size_t i = 0; i < length; i++) {
@@ -300,7 +314,7 @@ LONG print_card_status(SCARDHANDLE hCard) {
 
 LONG read_card_uid(SCARDHANDLE hCard, BYTE *pbRecvBuffer, DWORD *dwRecvLength) {
     BYTE cmd_get_uid[] = { 0xFF, 0xCA, 0x00, 0x00, 0x00 };
-    *dwRecvLength = sizeof(pbRecvBuffer);
+    *dwRecvLength = 32; // Fix: Use actual buffer size instead of sizeof pointer
     printf("Sending Get UID command: FF CA 00 00 00\n");
     
     return SCardTransmit(hCard, SCARD_PCI_T1, cmd_get_uid,
