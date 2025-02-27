@@ -95,22 +95,19 @@ int check_card_authorization(const char *uid_hex) {
     char url[256];
     
     // Construct the URL with the UID
-    snprintf(url, sizeof(url), "http://192.168.20.152:3000/check-access/%s", uid_hex);
+    snprintf(url, sizeof(url), "%s/check/%s", api_url, uid_hex);
     
     struct json_object *json_response = NULL;
+    char *response_data = NULL;
     
     curl = curl_easy_init();
     if (curl) {
-        char *response_data = NULL;
-        size_t response_size = 0;
-        
-        // Setup curl to write to our buffer
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
         
         res = curl_easy_perform(curl);
-        if (res == CURLE_OK) {
+        if (res == CURLE_OK && response_data) {
             json_response = json_tokener_parse(response_data);
             if (json_response) {
                 struct json_object *auth_obj;
@@ -119,6 +116,9 @@ int check_card_authorization(const char *uid_hex) {
                 }
                 json_object_put(json_response);
             }
+        } else {
+            printf("[-] Failed to check authorization: %s\n", 
+                   curl_easy_strerror(res));
         }
         
         free(response_data);
